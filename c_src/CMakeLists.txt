@@ -1,0 +1,28 @@
+cmake_minimum_required(VERSION 3.20)
+project(ocex_nif LANGUAGES CXX)
+find_package(OpenCASCADE 7.9.3 EXACT REQUIRED COMPONENTS FoundationClasses ModelingData ModelingAlgorithms Visualization ApplicationFramework DataExchange)
+# Reject upstream 7.9.3's misaligned allocator before loading a NIF into the VM.
+unset(OCEX_ALLOCATOR_STATUS CACHE)
+unset(OCEX_ALLOCATOR_COMPILED CACHE)
+try_run(OCEX_ALLOCATOR_STATUS OCEX_ALLOCATOR_COMPILED
+  "${CMAKE_BINARY_DIR}/allocator-check" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/check-allocator.cpp"
+  CMAKE_FLAGS "-DCMAKE_CXX_STANDARD=17" "-DINCLUDE_DIRECTORIES=${OpenCASCADE_INCLUDE_DIR}"
+  LINK_LIBRARIES TKernel
+  RUN_OUTPUT_VARIABLE OCEX_ALLOCATOR_OUTPUT)
+if(NOT OCEX_ALLOCATOR_COMPILED OR NOT "${OCEX_ALLOCATOR_STATUS}" STREQUAL "0")
+  message(FATAL_ERROR "OCEx requires OCCT 7.9.3 with the allocator-alignment correction. Run scripts/install-occt.sh from the OCEx package, then set OpenCASCADE_DIR to its lib/cmake/opencascade directory. ${OCEX_ALLOCATOR_OUTPUT}")
+endif()
+add_library(ocex_nif MODULE ocex_nif.cpp)
+target_compile_features(ocex_nif PRIVATE cxx_std_17)
+target_include_directories(ocex_nif SYSTEM PRIVATE "${OpenCASCADE_INCLUDE_DIR}" "${ERL_INCLUDE_DIR}")
+target_link_libraries(ocex_nif PRIVATE TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep TKGeomAlgo TKTopAlgo TKPrim TKBO TKShHealing TKBool TKFillet TKOffset TKMesh TKXSBase TKDESTEP TKDESTL)
+target_compile_options(ocex_nif PRIVATE -Wall -Wextra -Werror)
+set_target_properties(ocex_nif PROPERTIES PREFIX "" SUFFIX ".so" LIBRARY_OUTPUT_DIRECTORY "${NIF_OUTPUT_DIR}" BUILD_RPATH "${OpenCASCADE_LIBRARY_DIR}")
+if(APPLE)
+  target_link_options(ocex_nif PRIVATE "-undefined" "dynamic_lookup")
+endif()
+option(OCEX_SANITIZE "Enable undefined behavior sanitizer" OFF)
+if(OCEX_SANITIZE)
+  target_compile_options(ocex_nif PRIVATE -fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+  target_link_options(ocex_nif PRIVATE -fsanitize=undefined)
+endif()

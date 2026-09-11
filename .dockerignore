@@ -1,0 +1,9 @@
+.git
+.expert
+**/_build
+**/deps
+**/doc
+**/tmp
+output
+
+.occt

@@ -1,0 +1,13 @@
+**/_build/
+**/deps/
+**/priv/*.so
+**/priv/*.dylib
+output/
+.DS_Store
+**/tmp/
+**/doc/
+**/*.tar
+.expert/
+
+.occt/
+.ci/

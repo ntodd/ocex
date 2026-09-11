@@ -1,0 +1,50 @@
+name: Release checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+        beam:
+          - {elixir: '1.18.4', otp: '27.3.4.16'}
+          - {elixir: '1.20.1', otp: '29.0'}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      OpenCASCADE_DIR: ${{ github.workspace }}/.occt/lib/cmake/opencascade
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ matrix.beam.elixir }}
+          otp-version: ${{ matrix.beam.otp }}
+          version-type: strict
+      - name: Native prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake curl ca-certificates patch
+      - name: Dependencies
+        run: mix deps.get
+      - uses: actions/cache@v4
+        id: occt
+        with:
+          path: .occt
+          key: occt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/**') }}
+      - name: Build pinned OCCT
+        if: steps.occt.outputs.cache-hit != 'true'
+        run: sh scripts/install-occt.sh "$GITHUB_WORKSPACE/.occt"
+      - name: Tests and documentation
+        run: make check docs
+      - name: Package and isolated consumer
+        run: make package package-smoke
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ocex-${{ matrix.os }}-${{ matrix.beam.elixir }}
+          path: |
+            ocex-*.tar
+            doc

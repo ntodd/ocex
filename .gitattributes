@@ -1,0 +1,4 @@
+*.step -text -diff
+*.png binary
+*.brd -text -diff
+*.patch -whitespace

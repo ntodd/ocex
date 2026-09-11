@@ -1,0 +1,27 @@
+--- a/src/NCollection/NCollection_IncAllocator.cxx
++++ b/src/NCollection/NCollection_IncAllocator.cxx
+@@ -17,6 +17,8 @@
+ #include <Standard_OutOfMemory.hxx>
+ 
+ #include <cmath>
++#include <cstddef>
++#include <limits>
+ 
+ IMPLEMENT_STANDARD_RTTIEXT(NCollection_IncAllocator, NCollection_BaseAllocator)
+ 
+@@ -94,8 +96,14 @@
+ // function : AllocateOptimal
+ // purpose  : allocate a memory
+ //=======================================================================
+-void* NCollection_IncAllocator::AllocateOptimal(const size_t theSize)
++void* NCollection_IncAllocator::AllocateOptimal(const size_t theRequestedSize)
+ {
++  const size_t anAlignment = alignof(std::max_align_t);
++  if (theRequestedSize > std::numeric_limits<size_t>::max() - (anAlignment - 1))
++  {
++    Standard_OutOfMemory::Raise("NCollection_IncAllocator size overflow");
++  }
++  const size_t theSize = (theRequestedSize + anAlignment - 1) & ~(anAlignment - 1);
+   Standard_Mutex::Sentry aLock(myMutex);
+   // Allocating using general block
+   IBlock* aBlock = nullptr;
