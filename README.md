@@ -38,11 +38,11 @@ installed at runtime because the NIF dynamically links its libraries.
 
 | Area | Operations |
 | --- | --- |
-| Solids | Box, cylinder, sphere, cone |
+| Solids | Box, cylinder, sphere, cone, ring torus |
 | Profiles | Lines, circles, directed arcs, interpolated splines, wires, planar faces |
-| Modeling | Extrusion, revolution, ruled loft, compound, union, subtraction, intersection |
+| Modeling | Extrusion, revolution, ruled/smooth loft, sweep, shelling, split, section, draft, sewing, offset, thickening, compound, union, subtraction, intersection |
 | Finishing | Fillet, chamfer, same-domain cleanup |
-| Placement | Translation, axis-angle rotation, uniform scale |
+| Placement | Translation, axis-angle rotation, planar mirror, uniform scale |
 | Inspection | Topology, validity, bounds, volume, area, length, centroids, curve/surface information |
 | Exchange | BREP snapshots, STEP import/export, binary STL export, indexed surface mesh |
 

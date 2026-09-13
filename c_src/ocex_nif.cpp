@@ -3,35 +3,51 @@
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepAlgoAPI_Splitter.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepGProp.hxx>
+#include <BRepLib.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepOffsetAPI_DraftAngle.hxx>
+#include <BRepOffsetAPI_MakeOffsetShape.hxx>
+#include <BRepOffsetAPI_MakePipeShell.hxx>
+#include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
+#include <BRepOffset_MakeOffset.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
+#include <BRepPrimAPI_MakeTorus.hxx>
+#include <BRepProj_Projection.hxx>
 #include <BRepTools.hxx>
+#include <BRepTools_WireExplorer.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
+#include <GCPnts_TangentialDeflection.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <GProp_GProps.hxx>
 #include <GeomAPI_Interpolate.hxx>
 #include <Geom_BSplineCurve.hxx>
 #include <Geom_TrimmedCurve.hxx>
+#include <HLRAlgo_Projector.hxx>
+#include <HLRBRep_Algo.hxx>
+#include <HLRBRep_HLRToShape.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Precision.hxx>
 #include <STEPControl_Reader.hxx>
@@ -46,6 +62,7 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
+#include <TopoDS_Iterator.hxx>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -253,7 +270,8 @@ Term face_info(ErlNifEnv *env, const TopoDS_Face &face) {
   Term axis_origin = atom(env, "nil"), axis_direction = atom(env, "nil");
   if (surface.GetType() == GeomAbs_Plane) {
     type = "plane";
-    auto d = surface.Plane().Axis().Direction();
+    const auto axes = surface.Plane().Position();
+    gp_Dir d(gp_Vec(axes.XDirection()).Crossed(gp_Vec(axes.YDirection())));
     if (face.Orientation() == TopAbs_REVERSED)
       d.Reverse();
     normal = direction(env, d);
@@ -291,6 +309,316 @@ template <class Operation> TopoDS_Shape boolean(const TopoDS_Shape &a, const Top
   require(operation.IsDone() && !operation.HasErrors(), "operation_failed");
   return operation.Shape();
 }
+// Accept collections of the requested topology without silently dropping free
+// edges/faces from an otherwise valid compound.
+void leaves(const TopoDS_Shape &value, TopAbs_ShapeEnum kind, std::vector<TopoDS_Shape> &out) {
+  if (value.ShapeType() == kind) {
+    out.push_back(value);
+    return;
+  }
+  require(value.ShapeType() == TopAbs_COMPOUND ||
+              (kind == TopAbs_SOLID && value.ShapeType() == TopAbs_COMPSOLID),
+          "wrong_shape_type");
+  for (TopoDS_Iterator it(value); it.More(); it.Next())
+    leaves(it.Value(), kind, out);
+}
+TopoDS_Shape collection(const std::vector<TopoDS_Shape> &values) {
+  if (values.size() == 1)
+    return values.front();
+  BRep_Builder builder;
+  TopoDS_Compound result;
+  builder.MakeCompound(result);
+  for (const auto &value : values)
+    builder.Add(result, value);
+  return result;
+}
+std::vector<TopoDS_Shape> subshapes(const TopoDS_Shape &value, TopAbs_ShapeEnum kind) {
+  TopTools_IndexedMapOfShape found;
+  TopExp::MapShapes(value, kind, found);
+  std::vector<TopoDS_Shape> result;
+  for (int i = 1; i <= found.Extent(); ++i)
+    result.push_back(found(i));
+  return result;
+}
+
+void drawing_source(const TopoDS_Shape &value) {
+  if (value.ShapeType() == TopAbs_COMPOUND || value.ShapeType() == TopAbs_COMPSOLID) {
+    for (TopoDS_Iterator it(value); it.More(); it.Next())
+      drawing_source(it.Value());
+  } else {
+    require(value.ShapeType() == TopAbs_SOLID || value.ShapeType() == TopAbs_SHELL ||
+                value.ShapeType() == TopAbs_FACE || value.ShapeType() == TopAbs_WIRE ||
+                value.ShapeType() == TopAbs_EDGE,
+            "wrong_shape_type");
+  }
+}
+
+TopoDS_Shape drawing_edges(const std::vector<TopoDS_Shape> &groups) {
+  std::vector<TopoDS_Shape> edges;
+  for (const auto &group : groups) {
+    if (group.IsNull())
+      continue;
+    require(BRepLib::BuildCurves3d(group), "drawing_failed");
+    for (const auto &value : subshapes(group, TopAbs_EDGE)) {
+      auto edge = TopoDS::Edge(value);
+      if (!BRep_Tool::Degenerated(edge) &&
+          properties(edge, "length").Mass() > Precision::Confusion())
+        edges.push_back(edge);
+    }
+  }
+  return collection(edges);
+}
+
+Term drawing(ErlNifEnv *env, const TopoDS_Shape &source, const gp_Ax2 &frame, bool tangents) {
+  drawing_source(source);
+  if (subshapes(source, TopAbs_EDGE).empty())
+    return map(env, {{"visible", resource(env, collection({}))},
+                     {"hidden", resource(env, collection({}))}});
+  Handle(HLRBRep_Algo) algo = new HLRBRep_Algo();
+  algo->Add(copy(source), 0);
+  algo->Projector(HLRAlgo_Projector(frame));
+  algo->Update();
+  algo->Hide();
+  HLRBRep_HLRToShape extracted(algo);
+  std::vector<TopoDS_Shape> visible{extracted.VCompound(), extracted.OutLineVCompound()};
+  std::vector<TopoDS_Shape> hidden{extracted.HCompound(), extracted.OutLineHCompound()};
+  if (tangents) {
+    visible.push_back(extracted.Rg1LineVCompound());
+    hidden.push_back(extracted.Rg1LineHCompound());
+  }
+  return map(env, {{"visible", resource(env, drawing_edges(visible))},
+                   {"hidden", resource(env, drawing_edges(hidden))}});
+}
+
+Term polylines(ErlNifEnv *env, const TopoDS_Shape &source, double tolerance, double angular) {
+  std::vector<Term> lines;
+  for (const auto &value : subshapes(source, TopAbs_EDGE)) {
+    auto edge = TopoDS::Edge(value);
+    if (BRep_Tool::Degenerated(edge))
+      continue;
+    BRepAdaptor_Curve curve(edge);
+    const bool closed =
+        curve.Value(curve.FirstParameter()).Distance(curve.Value(curve.LastParameter())) <=
+        Precision::Confusion();
+    GCPnts_TangentialDeflection sampled(curve, angular, tolerance, closed ? 4 : 2);
+    require(sampled.NbPoints() >= 2, "sampling_failed");
+    std::vector<Term> points;
+    for (int i = 1; i <= sampled.NbPoints(); ++i)
+      points.push_back(point(env, sampled.Value(i)));
+    if (edge.Orientation() == TopAbs_REVERSED)
+      std::reverse(points.begin(), points.end());
+    lines.push_back(list(env, points));
+  }
+  return list(env, lines);
+}
+
+void projection_sources(const TopoDS_Shape &shape, std::vector<TopoDS_Shape> &out) {
+  if (shape.ShapeType() == TopAbs_EDGE || shape.ShapeType() == TopAbs_WIRE) {
+    out.push_back(shape);
+    return;
+  }
+  if (shape.ShapeType() == TopAbs_FACE) {
+    auto wires = subshapes(shape, TopAbs_WIRE);
+    require(!wires.empty(), "wrong_shape_type");
+    out.insert(out.end(), wires.begin(), wires.end());
+    return;
+  }
+  require(shape.ShapeType() == TopAbs_COMPOUND, "wrong_shape_type");
+  for (TopoDS_Iterator it(shape); it.More(); it.Next())
+    projection_sources(it.Value(), out);
+}
+
+void projection_target(const TopoDS_Shape &shape) {
+  if (shape.ShapeType() == TopAbs_COMPOUND || shape.ShapeType() == TopAbs_COMPSOLID) {
+    require(TopoDS_Iterator(shape).More(), "wrong_shape_type");
+    for (TopoDS_Iterator it(shape); it.More(); it.Next())
+      projection_target(it.Value());
+    return;
+  }
+  require(shape.ShapeType() == TopAbs_FACE || shape.ShapeType() == TopAbs_SHELL ||
+              shape.ShapeType() == TopAbs_SOLID,
+          "wrong_shape_type");
+}
+
+template <class Projection>
+TopoDS_Shape project_curves(const TopoDS_Shape &source, const TopoDS_Shape &target,
+                            const Projection &projection) {
+  std::vector<TopoDS_Shape> sources, results;
+  projection_sources(copy(source), sources);
+  require(!sources.empty(), "wrong_shape_type");
+  projection_target(target);
+  for (const auto &curve : sources) {
+    BRepProj_Projection builder(curve, copy(target), projection);
+    require(builder.IsDone(), "projection_failed");
+    builder.Init();
+    require(builder.More(), "projection_failed");
+    for (; builder.More(); builder.Next())
+      results.push_back(builder.Current());
+  }
+  require(!results.empty(), "projection_failed");
+  return collection(results);
+}
+
+gp_Pln extrusion_plane(const TopoDS_Shape &face, const gp_Vec &vector) {
+  BRepAdaptor_Surface surface(TopoDS::Face(face));
+  require(surface.GetType() == GeomAbs_Plane, "non_planar_profile");
+  auto plane = surface.Plane();
+  require(std::abs(vector.Dot(gp_Vec(plane.Axis().Direction()))) > Precision::Confusion(),
+          "degenerate_extrusion");
+  return plane;
+}
+
+TopoDS_Shape extrude_face(const TopoDS_Shape &face, const gp_Vec &vector, double taper) {
+  auto plane = extrusion_plane(face, vector);
+  BRepPrimAPI_MakePrism prism(face, vector, true);
+  require(prism.IsDone(), "operation_failed");
+  auto result = prism.Shape();
+  if (taper == 0)
+    return result;
+  gp_Dir direction(vector);
+  require(direction.IsParallel(plane.Axis().Direction(), Precision::Angular()),
+          "invalid_taper_direction");
+  BRepOffsetAPI_DraftAngle draft(result);
+  TopTools_IndexedMapOfShape selected;
+  for (const auto &edge : subshapes(face, TopAbs_EDGE)) {
+    for (const auto &generated : prism.Generated(edge)) {
+      if (generated.ShapeType() != TopAbs_FACE || selected.Contains(generated))
+        continue;
+      auto side = TopoDS::Face(generated);
+      auto type = BRepAdaptor_Surface(side).GetType();
+      require(type == GeomAbs_Plane || type == GeomAbs_Cylinder || type == GeomAbs_Cone,
+              "unsupported_draft_surface");
+      draft.Add(side, direction, taper * std::acos(-1) / 180, plane);
+      require(draft.AddDone(), "draft_failed");
+      for (const auto &modified : draft.ModifiedFaces())
+        selected.Add(modified);
+    }
+  }
+  require(!selected.IsEmpty(), "draft_failed");
+  draft.Build();
+  require(draft.IsDone(), "draft_failed");
+  result = draft.Shape();
+  require(result.ShapeType() == TopAbs_SOLID && BRepCheck_Analyzer(result).IsValid() &&
+              properties(result, "volume").Mass() > 1e-9,
+          "invalid_solid");
+  return result;
+}
+
+TopoDS_Shape extrude_profile(const TopoDS_Shape &profile, const gp_Vec &vector, bool both,
+                             double taper) {
+  std::vector<TopoDS_Shape> faces;
+  leaves(profile, TopAbs_FACE, faces);
+  require(!faces.empty(), "wrong_shape_type");
+  for (const auto &face : faces)
+    extrusion_plane(face, vector);
+  if (!both && taper == 0)
+    return BRepPrimAPI_MakePrism(profile, vector, true).Shape();
+  if (taper == 0) {
+    gp_Trsf shift;
+    shift.SetTranslation(-vector);
+    auto start = BRepBuilderAPI_Transform(profile, shift, true).Shape();
+    return BRepPrimAPI_MakePrism(start, vector * 2, true).Shape();
+  }
+  std::vector<TopoDS_Shape> results;
+  for (const auto &face : faces) {
+    auto result = extrude_face(face, vector, taper);
+    if (both) {
+      auto other = extrude_face(face, -vector, taper);
+      result = boolean<BRepAlgoAPI_Fuse>(result, other);
+      auto solids = subshapes(result, TopAbs_SOLID);
+      require(solids.size() == 1, "invalid_solid");
+      result = solids.front();
+    }
+    results.push_back(result);
+  }
+  return collection(results);
+}
+
+TopoDS_Shape extrude_until(const TopoDS_Shape &profile, const gp_Dir &direction,
+                           const gp_Pln &target) {
+  std::vector<TopoDS_Shape> faces;
+  leaves(profile, TopAbs_FACE, faces);
+  require(!faces.empty(), "wrong_shape_type");
+  for (const auto &face : faces)
+    extrusion_plane(face, gp_Vec(direction));
+  double alignment = direction.Dot(target.Axis().Direction());
+  require(std::abs(alignment) > Precision::Angular(), "invalid_direction");
+  // Measure signed plane distances in the target's own frame, so rotated
+  // world bounding boxes cannot incorrectly reject an otherwise valid target.
+  gp_Trsf local;
+  local.SetTransformation(target.Position());
+  auto transformed = BRepBuilderAPI_Transform(profile, local, true).Shape();
+  Bnd_Box bounds;
+  BRepBndLib::AddOptimal(transformed, bounds, false, false);
+  double first = -bounds.CornerMin().Z() / alignment;
+  double last = -bounds.CornerMax().Z() / alignment;
+  double nearest = std::min(first, last), farthest = std::max(first, last);
+  require(std::isfinite(nearest) && std::isfinite(farthest), "invalid_argument");
+  require(nearest > Precision::Confusion(), "target_not_ahead");
+  double length = farthest + std::max(1e-5, farthest * 1e-7);
+  require(std::isfinite(length), "invalid_argument");
+  auto plane = BRepBuilderAPI_MakeFace(target).Face();
+  auto half =
+      BRepPrimAPI_MakeHalfSpace(plane, target.Location().Translated(-gp_Vec(direction))).Solid();
+  std::vector<TopoDS_Shape> results;
+  for (const auto &face : faces) {
+    auto prism = extrude_face(face, gp_Vec(direction) * length, 0);
+    auto trimmed = boolean<BRepAlgoAPI_Common>(prism, half);
+    auto solids = subshapes(trimmed, TopAbs_SOLID);
+    require(solids.size() == 1 && properties(solids.front(), "volume").Mass() > 1e-9,
+            "invalid_solid");
+    results.push_back(solids.front());
+  }
+  return collection(results);
+}
+
+TopoDS_Shape offset_shape(const TopoDS_Shape &source, double distance, GeomAbs_JoinType join,
+                          bool thicken) {
+  if (source.ShapeType() == TopAbs_COMPOUND || source.ShapeType() == TopAbs_COMPSOLID) {
+    std::vector<TopoDS_Shape> results;
+    for (TopoDS_Iterator it(source); it.More(); it.Next())
+      results.push_back(offset_shape(it.Value(), distance, join, thicken));
+    require(!results.empty(), "wrong_shape_type");
+    return collection(results);
+  }
+  require(source.ShapeType() == TopAbs_FACE || source.ShapeType() == TopAbs_SHELL ||
+              (!thicken && source.ShapeType() == TopAbs_SOLID),
+          "wrong_shape_type");
+  auto surface = copy(source);
+  TopoDS_Shape result;
+  if (thicken) {
+    require(!BRep_Tool::IsClosed(surface), "closed_shell");
+    BRepOffset_MakeOffset builder;
+    builder.Initialize(surface, distance, Precision::Confusion(), BRepOffset_Skin, false, false,
+                       join, true, true);
+    builder.MakeOffsetShape();
+    require(builder.IsDone(), "thicken_failed");
+    result = builder.Shape();
+    require(!subshapes(result, TopAbs_SOLID).empty() && properties(result, "volume").Mass() > 1e-9,
+            "invalid_solid");
+  } else {
+    BRepOffsetAPI_MakeOffsetShape builder;
+    builder.PerformByJoin(surface, distance, Precision::Confusion(), BRepOffset_Skin, false, false,
+                          join, true);
+    require(builder.IsDone(), "offset_failed");
+    result = builder.Shape();
+    require(!subshapes(result, TopAbs_FACE).empty(), "offset_failed");
+    if (source.ShapeType() == TopAbs_SOLID) {
+      double original = properties(source, "volume").Mass();
+      double amount = properties(result, "volume").Mass();
+      double tolerance = std::max(1e-9, original * 1e-9);
+      require(!subshapes(result, TopAbs_SOLID).empty() && amount > 1e-9, "invalid_offset");
+      require(distance > 0 ? amount > original + tolerance : amount < original - tolerance,
+              "invalid_offset");
+      auto outside = distance > 0 ? boolean<BRepAlgoAPI_Cut>(source, result)
+                                  : boolean<BRepAlgoAPI_Cut>(result, source);
+      require(std::abs(properties(outside, "volume").Mass()) <= tolerance, "invalid_offset");
+    }
+  }
+  require(BRepCheck_Analyzer(result).IsValid(), "invalid_shape");
+  return result;
+}
+
 TopoDS_Shape triangulate(const TopoDS_Shape &original, double tolerance, double angular_tolerance) {
   auto result = copy(original);
   BRepMesh_IncrementalMesh mesher(result, tolerance, false, angular_tolerance, false);
@@ -346,6 +674,19 @@ Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) 
     arity(2);
     double r = positive(env, a[0]), h = positive(env, a[1]);
     return resource(env, BRepPrimAPI_MakeCylinder(r, h).Shape());
+  }
+  if (op == "torus") {
+    arity(2);
+    double major = positive(env, a[0]), minor = positive(env, a[1]);
+    require(major - minor > Precision::Confusion());
+    return resource(env, BRepPrimAPI_MakeTorus(major, minor).Shape());
+  }
+  if (op == "mirror") {
+    arity(3);
+    auto body = copy(shape(env, a[0]).value);
+    gp_Trsf transform;
+    transform.SetMirror(gp_Ax2(xyz(env, a[1]), gp_Dir(vector(env, a[2], true))));
+    return resource(env, BRepBuilderAPI_Transform(body, transform, true).Shape());
   }
   if (op == "sphere") {
     arity(1);
@@ -458,15 +799,86 @@ Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) 
     require(BRepCheck_Analyzer(builder.Face()).IsValid(), "invalid_shape");
     return resource(env, builder.Face());
   }
+  if (op == "split" || op == "section") {
+    arity(op == "split" ? 4 : 3);
+    auto body = copy(shape(env, a[0]).value);
+    std::vector<TopoDS_Shape> solids;
+    leaves(body, TopAbs_SOLID, solids);
+    require(!solids.empty(), "wrong_shape_type");
+    const auto origin = xyz(env, a[1]);
+    const gp_Dir normal(vector(env, a[2], true));
+    auto plane = BRepBuilderAPI_MakeFace(gp_Pln(origin, normal)).Face();
+    if (op == "section") {
+      auto result = boolean<BRepAlgoAPI_Common>(body, plane);
+      auto faces = subshapes(result, TopAbs_FACE);
+      for (auto &value : faces) {
+        BRepAdaptor_Surface surface(TopoDS::Face(value));
+        require(surface.GetType() == GeomAbs_Plane, "non_planar_profile");
+        auto axes = surface.Plane().Position();
+        gp_Vec direction = gp_Vec(axes.XDirection()).Crossed(gp_Vec(axes.YDirection()));
+        if (value.Orientation() == TopAbs_REVERSED)
+          direction.Reverse();
+        if (direction.Dot(gp_Vec(normal)) < 0)
+          value.Reverse();
+      }
+      return resource(env, collection(faces));
+    }
+    if (enif_is_identical(a[3], atom(env, "both"))) {
+      auto result = boolean<BRepAlgoAPI_Splitter>(body, plane);
+      return resource(env, collection(subshapes(result, TopAbs_SOLID)));
+    }
+    bool positive = enif_is_identical(a[3], atom(env, "positive"));
+    require(positive || enif_is_identical(a[3], atom(env, "negative")));
+    auto reference = origin.Translated(gp_Vec(normal) * (positive ? 1.0 : -1.0));
+    auto half = BRepPrimAPI_MakeHalfSpace(plane, reference).Solid();
+    auto result = boolean<BRepAlgoAPI_Common>(body, half);
+    return resource(env, collection(subshapes(result, TopAbs_SOLID)));
+  }
+  if (op == "drawing") {
+    arity(5);
+    auto source = shape(env, a[0]).value;
+    auto origin = xyz(env, a[1]);
+    gp_Dir normal(vector(env, a[2], true)), x(vector(env, a[3], true));
+    require(gp_Vec(normal).Crossed(gp_Vec(x)).Magnitude() > Precision::Confusion());
+    require(enif_is_identical(a[4], atom(env, "true")) ||
+            enif_is_identical(a[4], atom(env, "false")));
+    return drawing(env, source, gp_Ax2(origin, normal, x),
+                   enif_is_identical(a[4], atom(env, "true")));
+  }
+  if (op == "polylines") {
+    arity(3);
+    return polylines(env, shape(env, a[0]).value, positive(env, a[1]), positive(env, a[2]));
+  }
+  if (op == "project") {
+    arity(4);
+    const auto &source = shape(env, a[0]).value;
+    const auto &target = shape(env, a[1]).value;
+    if (enif_is_identical(a[2], atom(env, "parallel")))
+      return resource(env, project_curves(source, target, gp_Dir(vector(env, a[3], true))));
+    require(enif_is_identical(a[2], atom(env, "conical")));
+    return resource(env, project_curves(source, target, xyz(env, a[3])));
+  }
   if (op == "extrude") {
-    arity(2);
-    auto face = copy(shape(env, a[0], TopAbs_FACE).value);
+    if (a.size() != 2)
+      arity(4);
+    auto profile = copy(shape(env, a[0]).value);
     auto v = vector(env, a[1], true);
-    BRepAdaptor_Surface surface(TopoDS::Face(face));
-    require(surface.GetType() == GeomAbs_Plane, "non_planar_profile");
-    require(std::abs(v.Dot(gp_Vec(surface.Plane().Axis().Direction()))) > Precision::Confusion(),
-            "degenerate_extrusion");
-    return resource(env, BRepPrimAPI_MakePrism(face, v, true).Shape());
+    bool both = false;
+    double taper = 0;
+    if (a.size() == 4) {
+      both = enif_is_identical(a[2], atom(env, "true"));
+      require(both || enif_is_identical(a[2], atom(env, "false")));
+      taper = scalar(env, a[3]);
+      require(std::abs(taper) < 90);
+    }
+    return resource(env, extrude_profile(profile, v, both, taper));
+  }
+  if (op == "extrude_until") {
+    arity(4);
+    auto profile = copy(shape(env, a[0]).value);
+    gp_Dir direction(vector(env, a[1], true));
+    gp_Pln target(xyz(env, a[2]), gp_Dir(vector(env, a[3], true)));
+    return resource(env, extrude_until(profile, direction, target));
   }
   if (op == "revolve") {
     arity(4);
@@ -478,10 +890,12 @@ Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) 
                     BRepPrimAPI_MakeRevol(face, axis, angle * std::acos(-1) / 180, true).Shape());
   }
   if (op == "loft") {
-    arity(1);
+    arity(2);
+    require(enif_is_identical(a[1], atom(env, "true")) ||
+            enif_is_identical(a[1], atom(env, "false")));
     auto wires = terms(env, a[0]);
     require(wires.size() >= 2);
-    BRepOffsetAPI_ThruSections builder(true, true);
+    BRepOffsetAPI_ThruSections builder(true, enif_is_identical(a[1], atom(env, "true")));
     for (auto wire : wires) {
       auto w = TopoDS::Wire(copy(shape(env, wire, TopAbs_WIRE).value));
       require(w.Closed(), "open_wire");
@@ -490,6 +904,166 @@ Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) 
     builder.Build();
     require(builder.IsDone(), "operation_failed");
     return resource(env, builder.Shape());
+  }
+  if (op == "sweep") {
+    arity(4);
+    auto profile = TopoDS::Wire(copy(shape(env, a[0], TopAbs_WIRE).value));
+    auto path = TopoDS::Wire(copy(shape(env, a[1], TopAbs_WIRE).value));
+    require(profile.Closed(), "open_wire");
+    require(!path.Closed(), "closed_path");
+    bool frenet = enif_is_identical(a[2], atom(env, "frenet"));
+    require(frenet || enif_is_identical(a[2], atom(env, "corrected")));
+    BRepBuilderAPI_MakeFace face(profile, true);
+    require(face.IsDone(), "non_planar_profile");
+    require(BRepCheck_Analyzer(face.Face()).IsValid(), "invalid_shape");
+    BRepTools_WireExplorer explorer(path);
+    require(explorer.More(), "empty_path");
+    auto start = explorer.CurrentVertex();
+    BRepAdaptor_Curve curve(explorer.Current());
+    gp_Pnt p;
+    gp_Vec tangent;
+    curve.D1(explorer.Current().Orientation() == TopAbs_REVERSED ? curve.LastParameter()
+                                                                 : curve.FirstParameter(),
+             p, tangent);
+    require(tangent.Magnitude() > Precision::Confusion(), "undefined_tangent");
+    auto plane = BRepAdaptor_Surface(face.Face()).Plane();
+    require(plane.Distance(BRep_Tool::Pnt(start)) <= Precision::Confusion() &&
+                std::abs(plane.Axis().Direction().Dot(gp_Dir(tangent))) > 1 - 1e-7,
+            "misaligned_profile");
+    TopTools_IndexedMapOfShape edges;
+    TopExp::MapShapes(path, TopAbs_EDGE, edges);
+    int traversed = 0;
+    for (; explorer.More(); explorer.Next())
+      ++traversed;
+    require(traversed == edges.Extent(), "invalid_path");
+    BRepOffsetAPI_MakePipeShell builder(path);
+    builder.SetMode(frenet);
+    if (enif_is_identical(a[3], atom(env, "round")))
+      builder.SetTransitionMode(BRepBuilderAPI_RoundCorner);
+    else if (enif_is_identical(a[3], atom(env, "right")))
+      builder.SetTransitionMode(BRepBuilderAPI_RightCorner);
+    else {
+      require(enif_is_identical(a[3], atom(env, "transformed")));
+      builder.SetTransitionMode(BRepBuilderAPI_Transformed);
+    }
+    builder.Add(profile, start, false, false);
+    builder.Build();
+    require(builder.IsDone(), "operation_failed");
+    require(builder.MakeSolid(), "invalid_solid");
+    require(properties(builder.Shape(), "volume").Mass() > 1e-9, "invalid_solid");
+    return resource(env, builder.Shape());
+  }
+  if (op == "sew") {
+    arity(1);
+    auto faces = terms(env, a[0]);
+    require(!faces.empty(), "empty_selection");
+    TopTools_IndexedMapOfShape selected;
+    BRepBuilderAPI_Sewing builder(Precision::Confusion());
+    for (auto face : faces) {
+      const auto &value = shape(env, face, TopAbs_FACE).value;
+      require(!selected.Contains(value), "duplicate_subshape");
+      selected.Add(value);
+      builder.Add(copy(value));
+    }
+    builder.Perform();
+    require(builder.NbMultipleEdges() == 0, "non_manifold_surface");
+    require(!builder.SewedShape().IsNull(), "sewing_failed");
+    return resource(env, builder.SewedShape());
+  }
+  if (op == "offset" || op == "thicken") {
+    arity(3);
+    auto &source = shape(env, a[0]).value;
+    double distance = scalar(env, a[1]);
+    require(std::abs(distance) > Precision::Confusion());
+    bool intersection = enif_is_identical(a[2], atom(env, "intersection"));
+    require(intersection || enif_is_identical(a[2], atom(env, "arc")));
+    return resource(env, offset_shape(source, distance,
+                                      intersection ? GeomAbs_Intersection : GeomAbs_Arc,
+                                      op == "thicken"));
+  }
+  if (op == "draft") {
+    arity(6);
+    auto &body = shape(env, a[0]);
+    std::vector<TopoDS_Shape> solids;
+    leaves(body.value, TopAbs_SOLID, solids);
+    require(solids.size() == 1, "wrong_shape_type");
+    auto faces = terms(env, a[1]);
+    require(!faces.empty(), "empty_selection");
+    gp_Dir pull(vector(env, a[2], true));
+    double degrees = scalar(env, a[3]);
+    require(std::abs(degrees) < 90);
+    gp_Pln neutral(xyz(env, a[4]), gp_Dir(vector(env, a[5], true)));
+    require(std::abs(pull.Dot(neutral.Axis().Direction())) > 1e-7, "invalid_direction");
+    TopTools_IndexedMapOfShape members, selected;
+    TopExp::MapShapes(body.value, TopAbs_FACE, members);
+    for (auto face : faces) {
+      auto &f = shape(env, face, TopAbs_FACE);
+      require(f.revision == body.revision && members.Contains(f.value), "foreign_subshape");
+      require(!selected.Contains(f.value), "duplicate_subshape");
+      const auto type = BRepAdaptor_Surface(TopoDS::Face(f.value)).GetType();
+      require(type == GeomAbs_Plane || type == GeomAbs_Cylinder || type == GeomAbs_Cone,
+              "unsupported_draft_surface");
+      selected.Add(f.value);
+    }
+    BRepBuilderAPI_Copy copier(solids.front(), true, false);
+    if (degrees == 0)
+      return resource(env, copier.Shape());
+    BRepOffsetAPI_DraftAngle builder(copier.Shape());
+    for (int i = 1; i <= selected.Extent(); ++i) {
+      builder.Add(TopoDS::Face(copier.ModifiedShape(selected(i))), pull,
+                  degrees * std::acos(-1) / 180, neutral);
+      require(builder.AddDone(), "draft_failed");
+    }
+    builder.Build();
+    require(builder.IsDone(), "draft_failed");
+    auto result = builder.Shape();
+    require(result.ShapeType() == TopAbs_SOLID && properties(result, "volume").Mass() > 1e-9,
+            "invalid_solid");
+    return resource(env, result);
+  }
+  if (op == "shell") {
+    arity(4);
+    auto &body = shape(env, a[0]);
+    std::vector<TopoDS_Shape> solids;
+    leaves(body.value, TopAbs_SOLID, solids);
+    require(solids.size() == 1, "wrong_shape_type");
+    auto faces = terms(env, a[1]);
+    require(!faces.empty(), "empty_selection");
+    double thickness = scalar(env, a[2]);
+    require(std::abs(thickness) > Precision::Confusion());
+    GeomAbs_JoinType join = GeomAbs_Arc;
+    if (enif_is_identical(a[3], atom(env, "intersection")))
+      join = GeomAbs_Intersection;
+    else
+      require(enif_is_identical(a[3], atom(env, "arc")));
+    TopTools_IndexedMapOfShape members, selected;
+    TopExp::MapShapes(body.value, TopAbs_FACE, members);
+    for (auto face : faces) {
+      auto &f = shape(env, face, TopAbs_FACE);
+      require(f.revision == body.revision && members.Contains(f.value), "foreign_subshape");
+      require(!selected.Contains(f.value), "duplicate_subshape");
+      selected.Add(f.value);
+    }
+    BRepBuilderAPI_Copy copier(solids.front(), true, false);
+    TopTools_ListOfShape openings;
+    for (int i = 1; i <= selected.Extent(); ++i)
+      openings.Append(copier.ModifiedShape(selected(i)));
+    BRepOffsetAPI_MakeThickSolid builder;
+    builder.MakeThickSolidByJoin(copier.Shape(), openings, thickness, Precision::Confusion(),
+                                 BRepOffset_Skin, false, false, join);
+    require(builder.IsDone(), "operation_failed");
+    auto result = builder.Shape();
+    require(result.ShapeType() == TopAbs_SOLID && properties(result, "volume").Mass() > 1e-9,
+            "invalid_solid");
+    if (thickness < 0) {
+      double original_volume = properties(body.value, "volume").Mass();
+      double tolerance = std::max(1e-9, original_volume * 1e-9);
+      require(properties(result, "volume").Mass() < original_volume - tolerance,
+              "invalid_thickness");
+      auto outside = boolean<BRepAlgoAPI_Cut>(result, body.value);
+      require(std::abs(properties(outside, "volume").Mass()) <= tolerance, "invalid_thickness");
+    }
+    return resource(env, result);
   }
   if (op == "compound") {
     arity(1);

@@ -2,6 +2,19 @@
 
 ## 0.1.0
 
+- Add immutable parallel and conical projection of boundary curves onto surfaces.
+
+- Add symmetric/tapered planar-face extrusion and straight extrusion up to an infinite plane.
+
+- Add plane splits, filled sections, and extrusion of disconnected planar faces.
+- Add draft, face sewing, signed 3D offsets, and open-surface thickening.
+- Accept single-solid Boolean wrappers in draft and shell operations.
+
+- Add ring torus construction and planar reflection for shapes.
+- Correct planar-face normal metadata after a reflection.
+- Add smooth lofts, open-path sweeps, and shelling with signed thickness.
+- Validate shell face ownership, sweep profile placement, and inward-shell containment.
+
 Initial release targeting Open CASCADE Technology 7.9.3.
 
 - Direct C++17 NIF with immutable, garbage-collected shape resources.
@@ -12,3 +25,5 @@ Initial release targeting Open CASCADE Technology 7.9.3.
 - Checksummed OCCT source installer and actionable build diagnostics.
 - Keep OCCT range checks enabled and apply a minimal allocator-alignment correction in the pinned source installer. Verify the installed allocator before reporting success.
 - Documented native preconditions, query return maps, selection ownership, and exchange behavior; API examples run as doctests.
+
+- Added exact BREP hidden-line drawings with `drawing/5` and curve discretization with `polylines/3`; native builds now link OCCT TKHLR.

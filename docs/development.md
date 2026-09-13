@@ -11,8 +11,8 @@ make check docs
 make package package-smoke
 ```
 
-`make check` runs formatting, warnings-as-errors compilation, 79 behavioral tests,
-and 9 doctests. The API and guide checks run real geometry and file exchange.
+`make check` runs formatting, warnings-as-errors compilation, behavioral tests,
+and doctests. The API and guide checks run real geometry and file exchange.
 The archive check installs OCEx through an isolated signed local Hex registry,
 with no Smith dependency or checkout access.
 

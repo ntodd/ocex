@@ -110,6 +110,31 @@ defmodule OCEx do
   def sphere(radius), do: shape(:sphere, [radius])
 
   @doc """
+  Creates a complete ring torus centered at the origin, around world Z.
+
+  `major_radius` is the distance from the Z axis to the tube center;
+  `minor_radius` is the tube radius, both in mm. Both radii and their
+  difference must exceed 1.0e-7 mm. Horn and self-intersecting spindle
+  tori return `:invalid_argument`. The torus extends from -minor_radius
+  to +minor_radius in Z. Use transforms for other orientations.
+  """
+  @spec torus(number(), number()) :: result(Shape.t())
+  def torus(major_radius, minor_radius), do: shape(:torus, [major_radius, minor_radius])
+
+  @doc """
+  Reflects a shape across the plane through `origin` with the given normal.
+
+  Coordinates are world coordinates in mm. The normal is normalized and
+  must be nonzero. Supports edges, faces, solids, and compounds. Returns
+  an independent shape revision, preserving the input and outward solid
+  orientation. It returns only the reflection; use `compound/1` or
+  `fuse/2` to retain both copies. Malformed points or zero normals return
+  `:invalid_argument`.
+  """
+  @spec mirror(Shape.t(), point3(), point3()) :: result(Shape.t())
+  def mirror(body, origin, normal), do: shape(:mirror, [ref(body), origin, normal])
+
+  @doc """
   Creates a cone or frustum centered on world Z.
 
   `bottom` is the radius at Z=0; `top` is the radius at Z=`height`.
@@ -254,17 +279,168 @@ defmodule OCEx do
   def face(wire), do: shape(:face, [ref(wire)])
 
   @doc """
-  Extrudes a planar face along a world vector.
+  Splits solids with an infinite plane through `origin` along `normal`.
+
+  The plane normal is normalized. `keep:` accepts `:both` (default),
+  `:positive`, or `:negative`; positive means the side toward the normal.
+  Accepts a solid or a nonempty compound/compsolid containing only solids.
+  Free faces and edges are rejected with `:wrong_shape_type`.
+
+  Returns a solid for one remaining piece or a compound for zero/multiple
+  pieces. Both sides retain separate solids at the cut. A plane outside the
+  body preserves the whole body on its side and leaves the opposite side
+  empty. Boundary-only contact does not produce zero-volume solids.
+  Inputs remain unchanged; output topology belongs to a new revision.
+
+  Invalid planes return `:invalid_argument`; unknown, duplicate, or invalid
+  options return `:invalid_options`. Kernel failures are tagged errors.
+  """
+  @doc group: "Modeling"
+  @spec split(Shape.t(), point3(), point3(), keyword()) :: result(Shape.t())
+  def split(body, origin, normal, opts \\ []) do
+    with :ok <- options(opts, keep: [:both, :positive, :negative]),
+         do: shape(:split, [ref(body), origin, normal, Keyword.get(opts, :keep, :both)])
+  end
+
+  @doc """
+  Intersects solid material with an infinite plane, returning filled planar faces.
+
+  `origin` and `normal` define a world plane; the nonzero normal is
+  normalized. Accepts the same solid collections as `split/4`. Holes and
+  disconnected material regions are preserved. Returns one face or a
+  compound of zero/multiple faces. An outside plane or contact only at
+  points/edges gives an empty compound; a coincident boundary face remains.
+
+  Face normals follow the supplied plane normal. Coordinates remain in
+  world space. Use `area/1`, `wires/1`, or `extrude/2` on the result.
+  Inputs remain unchanged. Invalid plane arguments return
+  `:invalid_argument`; unsupported input topology returns
+  `:wrong_shape_type`. This operation does not project geometry.
+  """
+  @doc group: "Modeling"
+  @spec section(Shape.t(), point3(), point3()) :: result(Shape.t())
+  def section(body, origin, normal), do: shape(:section, [ref(body), origin, normal])
+
+  @doc """
+  Projects edges or wire boundaries onto target surfaces, returning wires.
+
+  Supply exactly one option: `direction: {x, y, z}` for parallel projection,
+  or `from: {x, y, z}` for conical projection through a world point.
+  Parallel directions are nonzero and normalized. Input coordinates and
+  resulting curves remain in world space.
+
+  Sources may be edges, wires, faces, or compounds of those types. A face
+  contributes every boundary wire, including holes; it does not contribute
+  filled material. Targets may be faces, shells, solids, or collections of
+  those types. Free edges in a target collection are rejected.
+
+  Returns one wire or a compound of wires. Curves are clipped to target
+  face boundaries. Multiple target intersections are retained; this is not
+  a nearest-hit selection. Parallel projection is bidirectional, so
+  reversing its direction does not select the opposite side of a solid.
+  Select target faces before projection when only one surface is wanted.
+  Conical projection follows half-rays from the point through the source;
+  it can hit before or beyond the source, but not behind the point.
+
+  A failed or missed source boundary returns `:projection_failed`; source
+  collections are not partially accepted after a failed boundary. Successful
+  partial intersections may yield open wires. No faces, shells, or solids
+  are filled from the projected curves. Coincident target/sweep surfaces may
+  return their boundary edges rather than isolated intersection curves.
+  Degenerate geometry can fail.
+  Unknown, duplicate, or missing options return `:invalid_options`.
+  Bad vectors/points return `:invalid_argument`; unsupported topology
+  returns `:wrong_shape_type`. Both inputs remain unchanged.
+  """
+  @doc group: "Modeling"
+  @spec project(Shape.t(), Shape.t(), keyword()) :: result(Shape.t())
+  def project(source, target, direction: direction),
+    do: shape(:project, [ref(source), ref(target), :parallel, direction])
+
+  def project(source, target, from: origin),
+    do: shape(:project, [ref(source), ref(target), :conical, origin])
+
+  def project(_, _, _), do: {:error, :invalid_options}
+
+  @doc """
+  Extrudes a planar face or a nonempty compound of planar faces along a world vector.
 
   The vector may be oblique to the face, but its normal component must
   exceed 1.0e-7 model units in magnitude. A vector lying in the face's plane
   returns `{:error, :degenerate_extrusion}`; a nonplanar face returns
   `{:error, :non_planar_profile}`. Face holes pass through the extrusion.
-  The result is a solid.
+  Each face produces a solid. Compounds retain separate results; they are
+  not fused. Collections containing edges, solids, or nonplanar faces fail.
   """
   @doc group: "Modeling"
   @spec extrude(Shape.t(), point3()) :: result(Shape.t())
   def extrude(face, vector), do: shape(:extrude, [ref(face), vector])
+
+  @doc """
+  Extrudes planar faces with symmetric extent and tapered walls.
+
+  Options are `both: false` and `taper: 0`. With `both: true`, the
+  full vector applies in each direction, doubling the extent. Each profile
+  still produces one solid; disconnected faces remain separate solids.
+
+  Taper is in degrees, strictly between −90 and 90. Positive taper removes
+  material away from the starting plane: outer walls narrow and holes widen.
+  Negative taper adds material. Symmetric taper applies the same angle to
+  both halves with the original profile as their shared neutral section.
+
+  Nonzero taper requires travel perpendicular to the profile plane and
+  planar or cylindrical prism walls. Unsupported curves return
+  `:unsupported_draft_surface`; oblique taper returns
+  `:invalid_taper_direction`. Collapsing walls or topology changes may
+  return `:draft_failed` or `:invalid_solid`. This is not a loft through
+  scaled sections. Zero taper retains the prism behavior of `extrude/2`.
+  Invalid option lists return `:invalid_options`; out-of-range angles
+  return `:invalid_argument`. Inputs remain unchanged.
+  """
+  @doc group: "Modeling"
+  @spec extrude(Shape.t(), point3(), keyword()) :: result(Shape.t())
+  def extrude(face, vector, opts) do
+    if is_list(opts) and Keyword.keyword?(opts) and
+         Kernel.length(Keyword.keys(opts)) == Kernel.length(Enum.uniq(Keyword.keys(opts))) and
+         Enum.all?(opts, fn
+           {:both, value} -> is_boolean(value)
+           {:taper, value} -> is_number(value)
+           _ -> false
+         end) do
+      shape(:extrude, [
+        ref(face),
+        vector,
+        Keyword.get(opts, :both, false),
+        Keyword.get(opts, :taper, 0)
+      ])
+    else
+      {:error, :invalid_options}
+    end
+  end
+
+  @doc """
+  Extrudes planar faces along a direction until they meet an infinite plane.
+
+  `origin` and `normal` define the target plane in world coordinates.
+  Direction and normal are nonzero vectors and are normalized. The entire
+  profile must reach the target in the positive travel direction, at a
+  distance greater than 1.0e-7 model units. The target may be tilted, but
+  may not cross or touch the starting profile. Reversing the target normal
+  does not change the result; reverse the travel direction to extrude backwards.
+
+  Holes and disconnected faces are preserved. Each face produces a separate
+  solid. Travel may be oblique to the profile; walls remain straight and
+  untapered. This operation targets a plane, not the nearest face of a body.
+
+  A parallel target returns `:invalid_direction`; a target not strictly
+  ahead returns `:target_not_ahead`. Input topology and profile errors
+  follow `extrude/2`. Invalid vectors return `:invalid_argument`.
+  Inputs remain unchanged.
+  """
+  @doc group: "Modeling"
+  @spec extrude_until(Shape.t(), point3(), point3(), point3()) :: result(Shape.t())
+  def extrude_until(face, direction, origin, normal),
+    do: shape(:extrude_until, [ref(face), direction, origin, normal])
 
   @doc """
   Revolves a face around a world axis.
@@ -283,17 +459,200 @@ defmodule OCEx do
     do: shape(:revolve, [ref(face), origin, axis, degrees])
 
   @doc """
-  Builds a capped, ruled loft through at least two closed wires.
+  Builds a capped loft through at least two closed wires.
+
+  The only option is `ruled: true` (default), which joins sections with
+  straight generators. `ruled: false` fits a smooth surface through them;
+  it can overshoot between sections and does not guarantee a particular
+  continuity at caps or seams. Unknown, duplicate, or invalid options return
+  `:invalid_options`.
 
   List sections in loft order. Each wire supplies one boundary; holes,
-  guide rails, seam controls, and smooth interpolation are not supported.
+  guide rails, and seam controls are not supported.
   OCCT determines correspondence between section edges. An open section
   returns `{:error, :open_wire}`. Degenerate section arrangements may fail
   kernel construction or validation.
   """
   @doc group: "Modeling"
-  @spec loft([Shape.t()]) :: result(Shape.t())
-  def loft(wires), do: shape(:loft, [refs(wires)])
+  @spec loft([Shape.t()], keyword()) :: result(Shape.t())
+  def loft(wires, opts \\ []) do
+    with :ok <- options(opts, ruled: [true, false]),
+         do: shape(:loft, [refs(wires), Keyword.get(opts, :ruled, true)])
+  end
+
+  @doc """
+  Sweeps one closed planar wire along an open wire, returning a capped solid.
+
+  Place the profile in the plane through the path's starting vertex,
+  perpendicular to its starting tangent. Its in-plane offset is retained;
+  OCEx does not center or rotate the profile automatically. Misplacement
+  returns `:misaligned_profile`. The spine must be a connected, nonbranching
+  wire. Closed paths and profiles with holes are not supported by this binding.
+
+  Options:
+
+    * `:frame` — `:corrected` (default, corrected Frenet) or `:frenet`.
+      Controls how the section turns along a curved path.
+    * `:transition` — `:transformed` (default), `:right` (intersect
+      adjoining swept segments), or `:round` (rotate around the corner).
+      Sharp corners may fail or self-intersect; use tangent-continuous paths
+      for predictable results.
+
+  Both inputs are copied before construction. Invalid geometry returns a
+  tagged kernel error. Successful BREP validation does not prove that an
+  arbitrary sweep is free of geometric self-intersections.
+  """
+  @doc group: "Modeling"
+  @spec sweep(Shape.t(), Shape.t(), keyword()) :: result(Shape.t())
+  def sweep(profile, path, opts \\ []) do
+    with :ok <-
+           options(opts, frame: [:corrected, :frenet], transition: [:transformed, :right, :round]),
+         do:
+           shape(:sweep, [
+             ref(profile),
+             ref(path),
+             Keyword.get(opts, :frame, :corrected),
+             Keyword.get(opts, :transition, :transformed)
+           ])
+  end
+
+  @doc """
+  Sews a nonempty list of faces into surfaces at 1.0e-7 mm tolerance.
+
+  Shared boundary edges are joined. Returns a face, a shell, or a compound
+  of disconnected surfaces; it does not fill closed shells into solids.
+  Faces may come from different shape revisions and remain unchanged.
+  Supply coherently oriented faces when the surface's normal matters.
+
+  Empty input returns `:empty_selection`, repeated topology returns
+  `:duplicate_subshape`, non-face members return `:wrong_shape_type`,
+  and non-manifold joins return `:non_manifold_surface`. Native sewing
+  or validation failures are tagged errors.
+  """
+  @doc group: "Profiles"
+  @spec sew([Shape.t()]) :: result(Shape.t())
+  def sew(faces), do: shape(:sew, [refs(faces)])
+
+  @doc """
+  Builds a parallel surface or expands/contracts a solid by a signed distance.
+
+  Accepts faces, shells, solids, or compounds of those shapes. Positive
+  distance follows surface normals, outward for an oriented solid;
+  negative distance goes inward. Its magnitude must exceed 1.0e-7 mm.
+  This is a 3D surface offset, not a planar outline offset.
+
+  `join: :arc` (default) fills convex gaps with rounded transitions;
+  `:intersection` extends adjacent offset surfaces until they meet.
+  Compound members are offset independently and are not fused. Sew faces
+  first with `sew/1` when adjacent faces must offset as one shell.
+
+  For solid inputs, the result must have positive volume and preserve
+  directional containment: outward results contain the original; inward
+  results stay inside it. Volume changes and containment use a tolerance
+  of max(1.0e-9 mm³, original volume * 1.0e-9). Violations return
+  `:invalid_offset`. A complete collapse is an error, not an empty result.
+
+  OCCT requires sufficiently smooth surfaces and offsets small enough to
+  avoid inversion or self-intersection. C0 spline surfaces and complex
+  intersections may fail. Global self-intersection repair is not enabled;
+  successful BREP validation does not prove absence of every geometric
+  self-intersection. Inputs remain unchanged. Unknown/duplicate options
+  return `:invalid_options`; invalid distances return `:invalid_argument`.
+  """
+  @doc group: "Modeling"
+  @spec offset(Shape.t(), number(), keyword()) :: result(Shape.t())
+  def offset(body, distance, opts \\ []) do
+    with :ok <- options(opts, join: [:arc, :intersection]),
+         do: shape(:offset, [ref(body), distance, Keyword.get(opts, :join, :arc)])
+  end
+
+  @doc """
+  Builds solid material between an open surface and its signed offset.
+
+  Accepts a face, an open shell, or a compound of these. Thickness magnitude
+  must exceed 1.0e-7 mm; positive follows oriented surface normals and
+  negative goes against them. The original surface forms one boundary,
+  and free edges receive connecting walls. Holes in faces remain holes.
+
+  `join: :intersection` (default) extends adjacent offset surfaces;
+  `:arc` uses rounded transitions where applicable. Sew connected faces
+  with `sew/1` first. Disconnected compound members produce separate
+  solids without fusing. Solid inputs return `:wrong_shape_type`; closed
+  shells return `:closed_shell`.
+
+  Results must contain positive-volume solids and pass native validation.
+  Surface smoothness and self-intersection limits follow `offset/3`.
+  Excessive thickness may collapse or invert curved features and fail with
+  `:thicken_failed`, `:invalid_solid`, or another native geometry error.
+  No global self-intersection repair or variable wall thickness is provided.
+  Input geometry remains unchanged.
+  """
+  @doc group: "Modeling"
+  @spec thicken(Shape.t(), number(), keyword()) :: result(Shape.t())
+  def thicken(surface, thickness, opts \\ []) do
+    with :ok <- options(opts, join: [:arc, :intersection]),
+         do: shape(:thicken, [ref(surface), thickness, Keyword.get(opts, :join, :intersection)])
+  end
+
+  @doc """
+  Tapers selected faces of one solid around a neutral plane.
+
+  A compound wrapping exactly one solid is also accepted. Collections with
+  multiple solids or free faces/edges return `:wrong_shape_type`.
+
+  `pull` is a nonzero direction vector; `angle` is in degrees, strictly
+  between -90 and 90. `neutral_origin` and `neutral_normal` define the
+  world plane where the selected surfaces retain their intersection.
+  The pull vector must not lie in that plane. Positive angles remove
+  material on the pull side of the neutral plane; negative angles add it.
+  Zero returns an independent copy after validating the inputs.
+
+  Faces must be planar, cylindrical, or conical and belong to this exact
+  solid revision. Empty, foreign, and duplicate selections return
+  `:empty_selection`, `:foreign_subshape`, or `:duplicate_subshape`.
+  Unsupported surfaces return `:unsupported_draft_surface`.
+
+  OCCT propagates draft through tangent-connected faces; those faces must
+  also support drafting. The operation cannot handle a taper that requires
+  a topology change, such as collapsing an edge or deleting a face.
+  Build failures return `:draft_failed` or a native geometry error.
+  Invalid angles/vectors return `:invalid_argument`; a pull direction
+  parallel to the neutral plane returns `:invalid_direction`.
+  The input solid and selected faces remain unchanged.
+  """
+  @doc group: "Modeling"
+  @spec draft(Shape.t(), [Shape.t()], point3(), number(), point3(), point3()) :: result(Shape.t())
+  def draft(body, faces, pull, angle, neutral_origin, neutral_normal),
+    do: shape(:draft, [ref(body), refs(faces), pull, angle, neutral_origin, neutral_normal])
+
+  @doc """
+  Hollows a solid by removing selected faces and offsetting the remaining walls.
+
+  A compound wrapping exactly one solid is also accepted. Free faces/edges
+  or multiple solids return `:wrong_shape_type`.
+
+  `thickness` is signed: negative builds inward, positive outward. Its
+  magnitude must exceed 1.0e-7 model units. At least one opening is required.
+  Faces must come from this exact body revision; foreign and duplicate faces
+  return `:foreign_subshape` and `:duplicate_subshape`. The input is copied,
+  including the correspondence of selected faces, before native construction.
+
+  `join: :arc` (default) rounds gaps between offset surfaces;
+  `join: :intersection` extends adjacent surfaces to their intersection.
+  Concave details, small radii, and excessive thickness can make the operation
+  fail. Only valid, positive-volume solid results are returned. Inward
+  results must remove material and stay inside the source solid within a
+  volume tolerance of max(1.0e-9, source volume * 1.0e-9); failures return
+  `:invalid_thickness`. General
+  self-intersection repair, closed cavities, and face thickening are not
+  exposed by this operation.
+  """
+  @doc group: "Modeling"
+  @spec shell(Shape.t(), [Shape.t()], number(), keyword()) :: result(Shape.t())
+  def shell(body, openings, thickness, opts \\ []) do
+    with :ok <- options(opts, join: [:arc, :intersection]),
+         do: shape(:shell, [ref(body), refs(openings), thickness, Keyword.get(opts, :join, :arc)])
+  end
 
   @doc """
   Copies shapes into a compound without joining their boundaries.
@@ -695,6 +1054,78 @@ defmodule OCEx do
         error -> error
       end
     end
+  end
+
+  @doc """
+  Creates an orthographic drawing with separate visible and hidden curves.
+
+  The view looks along the negative normal. The origin becomes drawing
+  coordinate `{0, 0}`; its depth has no effect on orthographic coordinates.
+  The normal and X direction must be nonzero and nonparallel. X is projected
+  into the view plane and normalized; local Y is normal cross X.
+
+  Returns `{:ok, %{visible: shape, hidden: shape}}`, containing native curves in
+  local XY at Z=0. Both values support edge queries and BREP serialization;
+  they are edge collections, not filled faces or joined wires. No edges in
+  a category gives an empty compound. End-on edges with projected length
+  at most 1.0e-7 are omitted. Coincident edges are not geometrically merged.
+
+  Accepts solids, shells, faces, wires, edges, and collections of them.
+  Free vertices return `:wrong_shape_type`. Sharp boundaries and silhouettes
+  are included. The only option is `tangents: true` to include smooth G1
+  boundaries between faces (default false). Surface seams and isoparametric
+  lines are excluded. Unknown, duplicate, or malformed options return
+  `:invalid_options`; malformed frames return `:invalid_argument`.
+
+  OCCT computes visibility from a copy of the BREP, independently of any
+  triangle mesh. The source is unchanged. Kernel failures return tagged
+  errors; a drawing is not a solid and cannot be used as a printable mesh.
+  """
+  @doc group: "Exchange"
+  @spec drawing(Shape.t(), point3(), point3(), point3(), keyword()) ::
+          result(%{visible: Shape.t(), hidden: Shape.t()})
+  def drawing(body, origin, normal, x_direction, opts \\ []) do
+    with :ok <- options(opts, tangents: [true, false]),
+         {:ok, layers} <-
+           call(:drawing, [
+             ref(body),
+             origin,
+             normal,
+             x_direction,
+             Keyword.get(opts, :tangents, false)
+           ]) do
+      {:ok, Map.new(layers, fn {key, value} -> {key, %Shape{ref: value}} end)}
+    end
+  end
+
+  @doc """
+  Samples each nondegenerate edge into an ordered list of 3D points.
+
+  Returns `{:ok, polylines}`, one point list per unique topological edge.
+  Lines contain their endpoints; curves are sampled with OCCT's tangential
+  deflection algorithm. Linear deflection defaults to 0.03 model units and
+  angular deflection to 0.1 radians; both must exceed 1.0e-7. These control
+  sampling, not exact analytic curve representation or a certified global
+  distance bound for arbitrary splines.
+
+  Points follow each edge's orientation and include both endpoints, including
+  the repeated endpoint of a closed edge. Closed circular edges retain at
+  least three distinct points even at coarse tolerances. Edges are not joined or sorted into
+  wires. Empty geometry and shapes without edges return an empty list.
+  Sampling leaves the input unchanged. Invalid deflections return
+  `:invalid_argument`; a failed sampler returns `:sampling_failed`.
+  """
+  @doc group: "Exchange"
+  @spec polylines(Shape.t(), number(), number()) :: result([[point3()]])
+  def polylines(body, tolerance \\ 0.03, angular_tolerance \\ 0.1),
+    do: call(:polylines, [ref(body), tolerance, angular_tolerance])
+
+  defp options(opts, allowed) do
+    if is_list(opts) and Keyword.keyword?(opts) and
+         Kernel.length(Keyword.keys(opts)) == Kernel.length(Enum.uniq(Keyword.keys(opts))) and
+         Enum.all?(opts, fn {key, value} -> value in Keyword.get(allowed, key, []) end),
+       do: :ok,
+       else: {:error, :invalid_options}
   end
 
   defp ref(%Shape{ref: ref}), do: ref
