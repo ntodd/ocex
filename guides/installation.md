@@ -101,6 +101,11 @@ keep the library installation accessible at runtime. A Mix release does not
 bundle those external libraries. Build and run on compatible operating systems,
 architectures, OTP installations, and C++ runtimes. Do not copy a macOS NIF to Linux.
 
+- **Moved checkout or switched between path and Hex dependencies:** the compiler
+  recreates its native cache when the source or build directory changes. With
+  OCEx 0.1.0, remove `_build/dev/native` in the consumer project, then run
+  `mix deps.compile ocex --force`. Use the corresponding build directory for
+  another Mix environment or a custom `MIX_BUILD_PATH`.
 - **CMake not found:** install CMake and make it available on `PATH`.
 - **`erl_nif.h` missing:** install development headers for the actual OTP used by Mix.
 - **OCCT configuration not found or wrong version:** run the pinned installer and

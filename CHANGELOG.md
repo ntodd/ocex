@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Recreate stale CMake caches when the dependency source or consumer build directory moves.
+
 ## 0.1.0
 
 - Add immutable parallel and conical projection of boundary curves onto surfaces.

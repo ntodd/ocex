@@ -42,6 +42,8 @@ defmodule Mix.Tasks.Compile.Ocex do
           &File.dir?/1
         )
 
+    prepare_build(build, source)
+
     configure = [
       "-S",
       source,
@@ -77,6 +79,28 @@ defmodule Mix.Tasks.Compile.Ocex do
     end
 
     {:ok, []}
+  end
+
+  defp prepare_build(build, source) do
+    cache_path = Path.join(build, "CMakeCache.txt")
+
+    if File.regular?(cache_path) do
+      cache = File.read!(cache_path)
+      locations = [{"CMAKE_HOME_DIRECTORY", source}, {"CMAKE_CACHEFILE_DIR", build}]
+
+      stale? =
+        Enum.any?(locations, fn {key, path} ->
+          case Regex.run(~r/^#{key}:INTERNAL=(.*)$/m, cache, capture: :all_but_first) do
+            [cached] -> Path.expand(String.trim_trailing(cached, "\r")) != Path.expand(path)
+            nil -> false
+          end
+        end)
+
+      if stale? do
+        Mix.shell().info("OCEx: rebuilding native cache after a source or build directory change")
+        File.rm_rf!(build)
+      end
+    end
   end
 end
 
