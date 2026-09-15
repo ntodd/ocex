@@ -2,3 +2,4 @@
 *.png binary
 *.brd -text -diff
 *.patch -whitespace
+test/fixtures/*.brep binary

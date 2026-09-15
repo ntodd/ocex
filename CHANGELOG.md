@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add closest-point distance witnesses and circular edge centers/axes for measured inspection.
+- Preserve planar support for filled sections at tightly spaced smooth-loft stations.
+
+- Add polynomial Bézier edges with explicit control points, degrees 1–25, and validated native construction.
+
 - Recreate stale CMake caches when the dependency source or consumer build directory moves.
 
 ## 0.1.0

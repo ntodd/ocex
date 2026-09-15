@@ -44,6 +44,7 @@
 #include <GProp_GProps.hxx>
 #include <GeomAPI_Interpolate.hxx>
 #include <Geom_BSplineCurve.hxx>
+#include <Geom_BezierCurve.hxx>
 #include <Geom_TrimmedCurve.hxx>
 #include <HLRAlgo_Projector.hxx>
 #include <HLRBRep_Algo.hxx>
@@ -239,6 +240,7 @@ Term edge_info(ErlNifEnv *env, const TopoDS_Edge &edge) {
   auto props = properties(edge, "length");
   const char *type = "other";
   Term radius = atom(env, "nil"), dir = atom(env, "nil");
+  Term center = atom(env, "nil"), axis = atom(env, "nil");
   if (curve.GetType() == GeomAbs_Line) {
     type = "line";
     auto d = curve.Line().Direction();
@@ -248,6 +250,8 @@ Term edge_info(ErlNifEnv *env, const TopoDS_Edge &edge) {
   } else if (curve.GetType() == GeomAbs_Circle) {
     type = "circle";
     radius = number(env, curve.Circle().Radius());
+    center = point(env, curve.Circle().Location());
+    axis = direction(env, curve.Circle().Axis().Direction());
   }
   double first = curve.FirstParameter(), last = curve.LastParameter();
   auto start = curve.Value(first), end = curve.Value(last);
@@ -260,6 +264,8 @@ Term edge_info(ErlNifEnv *env, const TopoDS_Edge &edge) {
               {"end", point(env, end)},
               {"direction", dir},
               {"radius", radius},
+              {"center", center},
+              {"axis", axis},
               {"parameter_bounds", enif_make_tuple2(env, number(env, first), number(env, last))}});
 }
 Term face_info(ErlNifEnv *env, const TopoDS_Face &face) {
@@ -725,6 +731,24 @@ Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) 
                   : GC_MakeArcOfCircle(circle, (start + sweep) * rad, start * rad, false).Value();
     return resource(env, BRepBuilderAPI_MakeEdge(curve).Edge());
   }
+  if (op == "bezier") {
+    arity(1);
+    auto points = terms(env, a[0]);
+    require(points.size() >= 2 && points.size() <= size_t(Geom_BezierCurve::MaxDegree() + 1));
+    TColgp_Array1OfPnt poles(1, points.size());
+    bool distinct = false;
+    for (size_t i = 0; i < points.size(); ++i) {
+      auto p = xyz(env, points[i]);
+      if (i && p.Distance(poles.Value(1)) > Precision::Confusion())
+        distinct = true;
+      poles.SetValue(i + 1, p);
+    }
+    require(distinct);
+    Handle(Geom_BezierCurve) curve = new Geom_BezierCurve(poles);
+    BRepBuilderAPI_MakeEdge builder(curve);
+    require(builder.IsDone(), "operation_failed");
+    return resource(env, builder.Edge());
+  }
   if (op == "spline") {
     arity(2);
     auto points = terms(env, a[0]);
@@ -772,6 +796,18 @@ Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) 
       tangent.Reverse();
     return map(env, {{"point", point(env, p)}, {"tangent", direction(env, gp_Dir(tangent))}});
   }
+  if (op == "closest_points") {
+    arity(2);
+    const auto &a_shape = shape(env, a[0]).value;
+    const auto &b_shape = shape(env, a[1]).value;
+    require(!subshapes(a_shape, TopAbs_VERTEX).empty() &&
+            !subshapes(b_shape, TopAbs_VERTEX).empty(), "empty_shape");
+    BRepExtrema_DistShapeShape distance(a_shape, b_shape);
+    require(distance.IsDone() && distance.NbSolution() > 0, "operation_failed");
+    return map(env, {{"distance", number(env, distance.Value())},
+                     {"point_a", point(env, distance.PointOnShape1(1))},
+                     {"point_b", point(env, distance.PointOnShape2(1))}});
+  }
   if (op == "distance_to_point") {
     arity(2);
     BRepExtrema_DistShapeShape distance(shape(env, a[0]).value,
@@ -809,7 +845,8 @@ Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) 
     const gp_Dir normal(vector(env, a[2], true));
     auto plane = BRepBuilderAPI_MakeFace(gp_Pln(origin, normal)).Face();
     if (op == "section") {
-      auto result = boolean<BRepAlgoAPI_Common>(body, plane);
+      // Keep the planar tool as the result support, including at loft stations.
+      auto result = boolean<BRepAlgoAPI_Common>(plane, body);
       auto faces = subshapes(result, TopAbs_FACE);
       for (auto &value : faces) {
         BRepAdaptor_Surface surface(TopoDS::Face(value));

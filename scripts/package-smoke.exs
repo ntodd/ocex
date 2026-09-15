@@ -1,5 +1,5 @@
 # Copied into an isolated consumer and installed from the built Hex archive.
-Mix.install([{:ocex, "~> 0.1.0"}])
+Mix.install([{:ocex, "~> 0.2.0"}])
 
 false = Code.ensure_loaded?(Smith)
 {:ok, "7.9.3"} = OCEx.version()
@@ -79,3 +79,15 @@ true = abs(silhouette_length - 6 * :math.pi()) < 1.0e-6
 {:ok, [_points]} = OCEx.polylines(drawing.visible)
 {:ok, []} = OCEx.edges(drawing.hidden)
 IO.puts("Verified archive-installed orthographic silhouettes and curve sampling")
+
+{:ok, bezier} = OCEx.bezier([{0, 0, 0}, {1, 2, 0}, {2, 0, 0}])
+{:ok, %{point: {1.0, 1.0, 0.0}}} = OCEx.edge_sample(bezier, 0.5)
+IO.puts("Verified archive-installed Bezier control-point geometry")
+
+{:ok, shifted} = OCEx.translate(box, {10, 0, 0})
+{:ok, %{distance: distance}} = OCEx.closest_points(box, shifted)
+true = abs(distance - 8) < 1.0e-7
+{:ok, circle} = OCEx.circle(2)
+{:ok, %{center: {x, y, z}, axis: _}} = OCEx.edge_info(circle)
+true = abs(x) + abs(y) + abs(z) < 1.0e-7
+IO.puts("Verified archive-installed inspection witnesses and circle datums")

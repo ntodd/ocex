@@ -1,6 +1,6 @@
 # Native installation
 
-OCEx 0.1 requires **Open CASCADE Technology 7.9.3**, CMake 3.20+, a C++17 compiler,
+OCEx 0.2 requires **Open CASCADE Technology 7.9.3**, CMake 3.20+, a C++17 compiler,
 and Elixir 1.18+ with Erlang/OTP development headers. The NIF compiles from source
 when Mix compiles the dependency. There are no precompiled NIF downloads.
 
@@ -55,25 +55,26 @@ a Mix project:
 
 ```sh
 mix local.hex --force
-mix hex.package fetch ocex 0.1.0 --unpack --output ocex-toolkit
+mix hex.package fetch ocex 0.2.0 --unpack --output ocex-toolkit
 sh ocex-toolkit/scripts/install-occt.sh
 ```
 
 The last command installs into the default source prefix, which OCEx discovers
-automatically. The versioned fetch becomes available after the first publication.
+automatically. Use a version that has been published to Hex; before publication, run the installer
+from the OCEx checkout.
 
 ## Use OCEx
 
 In a Mix project:
 
 ```elixir
-{:ocex, "~> 0.1.0"}
+{:ocex, "~> 0.2.0"}
 ```
 
 Or in a standalone script, once the toolkit is installed:
 
 ```elixir
-Mix.install([{:ocex, "~> 0.1.0"}])
+Mix.install([{:ocex, "~> 0.2.0"}])
 {:ok, box} = OCEx.box(10, 20, 30)
 {:ok, volume} = OCEx.volume(box)
 true = abs(volume - 6000.0) < 1.0e-6
@@ -106,6 +107,9 @@ architectures, OTP installations, and C++ runtimes. Do not copy a macOS NIF to L
   OCEx 0.1.0, remove `_build/dev/native` in the consumer project, then run
   `mix deps.compile ocex --force`. Use the corresponding build directory for
   another Mix environment or a custom `MIX_BUILD_PATH`.
+- **Xcode license not accepted:** if the compiler output asks you to agree to
+  the Xcode license, run `sudo xcodebuild -license` in Terminal and follow the
+  prompts. Then restart the Livebook runtime and rerun setup.
 - **CMake not found:** install CMake and make it available on `PATH`.
 - **`erl_nif.h` missing:** install development headers for the actual OTP used by Mix.
 - **OCCT configuration not found or wrong version:** run the pinned installer and

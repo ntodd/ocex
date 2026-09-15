@@ -110,7 +110,7 @@ defmodule OCEx.MixProject do
   def project do
     [
       app: :ocex,
-      version: "0.1.0",
+      version: "0.2.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       compilers: [:ocex] ++ Mix.compilers(),
@@ -121,8 +121,8 @@ defmodule OCEx.MixProject do
       deps: [{:ex_doc, "~> 0.40", only: :dev, runtime: false}],
       docs: [
         main: "readme",
-        source_ref: "v0.1.0",
-        source_url_pattern: "https://github.com/ntodd/ocex/blob/v0.1.0/%{path}#L%{line}",
+        source_ref: "v0.2.0",
+        source_url_pattern: "https://github.com/ntodd/ocex/blob/v0.2.0/%{path}#L%{line}",
         extras: [
           "README.md",
           "guides/installation.md",
