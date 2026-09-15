@@ -50,6 +50,8 @@ defmodule OCEx do
           length: float(),
           direction: vector3() | nil,
           radius: float() | nil,
+          center: vector3() | nil,
+          axis: vector3() | nil,
           parameter_bounds: {float(), float()}
         }
   @type face_info :: %{
@@ -191,6 +193,30 @@ defmodule OCEx do
     do: shape(:arc, [center, normal, x_direction, radius, start, sweep])
 
   @doc """
+  Builds a polynomial Bézier edge from ordered world-space control points.
+
+  Supply 2–26 finite `{x, y, z}` points (degree 1–25 in OCCT 7.9.3).
+  The curve starts at the first point and ends at the last. Interior points
+  control its shape; the curve generally does not pass through them. Its
+  parameter interval is 0–1 and its geometry stays in their convex hull.
+  Four points define a cubic. Weights and periodic curves are not supported.
+
+  Repeated control points and coincident endpoints are allowed. All points
+  within 1.0e-7 mm of the first, malformed points, and unsupported counts
+  return `:invalid_argument`. Kernel construction can return `:operation_failed`.
+  Repeated endpoint poles may yield a zero derivative, in which case
+  `edge_sample/2` cannot return a unit tangent at that endpoint.
+
+      iex> {:ok, edge} = OCEx.bezier([{0, 0, 0}, {1, 2, 0}, {2, 0, 0}])
+      iex> {:ok, %{point: point}} = OCEx.edge_sample(edge, 0.5)
+      iex> point
+      {1.0, 1.0, 0.0}
+  """
+  @doc group: "Curves and topology"
+  @spec bezier([point3()]) :: result(Shape.t())
+  def bezier(points), do: shape(:bezier, [points])
+
+  @doc """
   Interpolates a nonperiodic B-spline through ordered world points.
 
   Supply 2 to 100,000 points. Consecutive points must be more than 1.0e-6
@@ -237,6 +263,20 @@ defmodule OCEx do
   @doc group: "Measurements"
   @spec edge_sample(Shape.t(), number()) :: result(%{point: vector3(), tangent: vector3()})
   def edge_sample(edge, fraction), do: call(:edge_sample, [ref(edge), fraction])
+
+  @doc """
+  Measures minimum material distance between two shapes, with world-space witnesses.
+
+  Returns `{:ok, %{distance: mm, point_a: point, point_b: point}}`.
+  Intersecting or contained solids have zero distance. This is not a signed
+  penetration depth; use a common-volume check to distinguish contact from
+  interference. If several closest pairs exist, one is returned without a
+  stable ordering guarantee. Empty inputs return `:empty_shape`.
+  """
+  @doc group: "Measurements"
+  @spec closest_points(Shape.t(), Shape.t()) ::
+          result(%{distance: float(), point_a: point3(), point_b: point3()})
+  def closest_points(a, b), do: call(:closest_points, [ref(a), ref(b)])
 
   @doc """
   Measures the minimum distance between a shape and a world point.
@@ -877,6 +917,7 @@ defmodule OCEx do
   | `:length` | Curve length in model units |
   | `:direction` | Directed unit vector for a line; otherwise `nil` |
   | `:radius` | Radius for a circle or circular arc; otherwise `nil` |
+  | `:center`, `:axis` | Circle center and axis direction (also for arcs); otherwise `nil` |
   | `:parameter_bounds` | Underlying curve's `{first, last}` parameters |
 
   Reversed edges swap endpoints and reverse line direction; parameter bounds

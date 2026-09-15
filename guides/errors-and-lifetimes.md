@@ -24,7 +24,7 @@ Persist a shape through BREP or STEP. Resource handles cannot be moved to anothe
 | `:duplicate_subshape` | A fillet/chamfer selection repeats an edge |
 | `:disconnected_wire`, `:open_wire` | Edges cannot be joined, or a required boundary is open |
 | `:non_planar_profile`, `:degenerate_extrusion` | Extrusion needs a planar face and displacement out of its plane |
-| `:empty_shape` | Bounds are empty or volume centroid has zero volume |
+| `:empty_shape` | A measurement requires nonempty geometry, or a volume centroid has zero volume |
 | `:undefined_tangent` | The sampled edge derivative has no usable direction |
 | `:operation_failed` | A kernel builder or transfer did not complete |
 | `:invalid_shape` | Returned or imported topology failed OCCT validation |

@@ -17,7 +17,7 @@ Install the native prerequisites using the [installation guide](guides/installat
 then save this as `plate.exs`:
 
 ```elixir
-Mix.install([{:ocex, "~> 0.1.0"}])
+Mix.install([{:ocex, "~> 0.2.0"}])
 
 {:ok, blank} = OCEx.box(60, 40, 5)
 {:ok, bore} = OCEx.cylinder(4, 7)
@@ -30,7 +30,7 @@ Mix.install([{:ocex, "~> 0.1.0"}])
 IO.puts("Plate volume: #{volume} mm³")
 ```
 
-Run `elixir plate.exs`. For a Mix application, add `{:ocex, "~> 0.1.0"}` to its
+Run `elixir plate.exs`. For a Mix application, add `{:ocex, "~> 0.2.0"}` to its
 dependencies. Mix builds the NIF automatically. The exact OCCT toolkit must remain
 installed at runtime because the NIF dynamically links its libraries.
 
