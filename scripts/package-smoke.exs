@@ -81,7 +81,8 @@ true = abs(silhouette_length - 6 * :math.pi()) < 1.0e-6
 IO.puts("Verified archive-installed orthographic silhouettes and curve sampling")
 
 {:ok, bezier} = OCEx.bezier([{0, 0, 0}, {1, 2, 0}, {2, 0, 0}])
-{:ok, %{point: {1.0, 1.0, 0.0}}} = OCEx.edge_sample(bezier, 0.5)
+{:ok, %{point: {x, y, z}}} = OCEx.edge_sample(bezier, 0.5)
+true = abs(x - 1) < 1.0e-9 and abs(y - 1) < 1.0e-9 and abs(z) < 1.0e-9
 IO.puts("Verified archive-installed Bezier control-point geometry")
 
 {:ok, shifted} = OCEx.translate(box, {10, 0, 0})

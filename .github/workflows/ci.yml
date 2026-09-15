@@ -1,8 +1,12 @@
 name: Release checks
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -34,7 +38,7 @@ jobs:
         id: occt
         with:
           path: .occt
-          key: occt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/**') }}
+          key: occt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/install-occt.sh', 'scripts/check-allocator.cpp', 'scripts/patches/**') }}
       - name: Build pinned OCCT
         if: steps.occt.outputs.cache-hit != 'true'
         run: sh scripts/install-occt.sh "$GITHUB_WORKSPACE/.occt"

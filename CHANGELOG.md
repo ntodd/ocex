@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Add closest-point distance witnesses and circular edge centers/axes for measured inspection.
 - Preserve planar support for filled sections at tightly spaced smooth-loft stations.

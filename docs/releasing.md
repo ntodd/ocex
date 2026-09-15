@@ -1,49 +1,62 @@
-# Releasing OCEx
+# Releasing OCEx 0.2
 
-This repository publishes only `ocex`. Its source repository is
-[ntodd/ocex](https://github.com/ntodd/ocex), and the first release tag is `v0.1.0`.
-OCEx is released independently of Smith. It has no runtime Hex dependencies.
+This repository publishes `ocex` version `0.2.0` from tag `v0.2.0`.
+Publish OCEx before Smith 0.2. OCEx has no runtime Hex dependencies.
 
-## Prepare
+## Prepare the source
 
-1. Review source, examples, package metadata, and the changelog. Exclude private
-   projects and local notebook dependency experiments.
-2. Update the version, ExDoc source tag, smoke-test version, and dependency ranges
-   together for subsequent releases.
-3. Run `make check docs package package-smoke`. See
-   [development](development.md) for unpublished-dependency checks.
-4. Inspect `doc/index.html` and the archive's file list. Push reviewed source
-   and wait for this repository's CI matrix to pass.
-5. Create and push the annotated tag at the verified commit:
+1. Review the changelog and package file list. Keep private projects, build output,
+   and local notebook dependency experiments out of the package.
+2. Run `make check docs package package-smoke`. The smoke test installs the built
+   archive through a signed local registry into an isolated consumer.
+3. Inspect `doc/index.html`. Push the release commit and wait for the macOS/Linux
+   CI matrix to pass.
+4. Create the annotated tag at that verified commit, unless it already exists:
 
 ```sh
-git tag -a v0.1.0 -m "ocex 0.1.0"
-git push origin v0.1.0
+git tag -a v0.2.0 -m "OCEx 0.2.0"
+git push origin v0.2.0
 ```
 
-## Owner authentication and publication
+The version in `mix.exs`, ExDoc source links, changelog, and smoke-test dependency
+must agree. Do not move a published release tag.
 
-Run from this repository after its source and tag are public:
+## Publish to Hex
+
+Run from the tagged checkout. Authenticate with `mix hex.user auth` if needed.
+The dry run builds the package and documentation without publishing:
 
 ```sh
 mix deps.get
-mix hex.user auth
 mix hex.publish --dry-run
 mix hex.publish
 ```
 
-Review the package summary before confirming. Publication includes ExDoc.
-Hex requires authentication even for a publication dry run; local archive
-checks need no publication credentials. Do not move a tag after publication.
+Review the package summary before confirming. The final command publishes both
+the package and ExDoc. Keep the native toolkit available while building the docs.
 
-After publishing, copy `scripts/package-smoke.exs` into a temporary directory
-and run it there with fresh `HEX_HOME` and `MIX_INSTALL_DIR` against public
-Hex. Keep the native toolkit installed. Check the published HexDocs guides
-and source links. Confirm the package can be built without a Smith checkout.
+## Verify the public package
 
-## Supported native installation
+Run this from the repository after publication. The consumer has fresh caches,
+uses the public Hex registry, and writes its exports outside the checkout:
 
-This release uses OCCT 7.9.3 with the documented allocator correction and
-kernel exception checks enabled. OCCT shared libraries must remain available
-at runtime. Precompiled NIFs, Windows, hot upgrades, and hard cancellation
-are outside this release.
+```sh
+release_check=$(mktemp -d)
+cp scripts/package-smoke.exs "$release_check/model.exs"
+(
+  cd "$release_check"
+  env -u OCEX_PATH HEX_HOME="$release_check/hex" \
+    MIX_INSTALL_DIR="$release_check/install" elixir model.exs
+)
+```
+
+Check [OCEx 0.2 HexDocs](https://hexdocs.pm/ocex/0.2.0/), including guide and source
+links. Once the public installation passes, Smith can resolve OCEx 0.2 from Hex.
+
+## Native support
+
+This release uses OCCT 7.9.3 with the documented allocator correction and kernel
+exception checks enabled. OCCT shared libraries must remain available at runtime.
+See [installation](../guides/installation.md) for CMake, compiler, and OTP header
+requirements. Precompiled NIFs, Windows, hot upgrades, and hard cancellation are
+outside this release.
