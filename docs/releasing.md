@@ -1,7 +1,7 @@
-# Releasing OCEx 0.2
+# Releasing OCEx 0.3
 
-This repository publishes `ocex` version `0.2.0` from tag `v0.2.0`.
-Publish OCEx before Smith 0.2. OCEx has no runtime Hex dependencies.
+This repository publishes `ocex` version `0.3.0` from tag `v0.3.0`.
+Publish OCEx before Smith 0.3. OCEx has no runtime Hex dependencies.
 
 ## Prepare the source
 
@@ -14,8 +14,8 @@ Publish OCEx before Smith 0.2. OCEx has no runtime Hex dependencies.
 4. Create the annotated tag at that verified commit, unless it already exists:
 
 ```sh
-git tag -a v0.2.0 -m "OCEx 0.2.0"
-git push origin v0.2.0
+git tag -a v0.3.0 -m "OCEx 0.3.0"
+git push origin v0.3.0
 ```
 
 The version in `mix.exs`, ExDoc source links, changelog, and smoke-test dependency
@@ -50,8 +50,8 @@ cp scripts/package-smoke.exs "$release_check/model.exs"
 )
 ```
 
-Check [OCEx 0.2 HexDocs](https://hexdocs.pm/ocex/0.2.0/), including guide and source
-links. Once the public installation passes, Smith can resolve OCEx 0.2 from Hex.
+Check [OCEx 0.3 HexDocs](https://hexdocs.pm/ocex/0.3.0/), including guide and source
+links. Once the public installation passes, Smith can resolve OCEx 0.3 from Hex.
 
 ## Native support
 
@@ -60,3 +60,16 @@ exception checks enabled. OCCT shared libraries must remain available at runtime
 See [installation](../guides/installation.md) for CMake, compiler, and OTP header
 requirements. Precompiled NIFs, Windows, hot upgrades, and hard cancellation are
 outside this release.
+
+## Update published documentation
+
+Documentation can be republished for the current version without changing the
+package version or replacing its archive:
+
+```sh
+mix hex.publish docs --dry-run
+mix hex.publish docs
+```
+
+Review the generated pages before publishing. This updates HexDocs only; changes
+to installed Elixir code or Livebook assets require a new package release.

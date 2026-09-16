@@ -1,7 +1,7 @@
 # Native installation
 
-OCEx 0.2 requires **Open CASCADE Technology 7.9.3**, CMake 3.20+, a C++17 compiler,
-and Elixir 1.18+ with Erlang/OTP development headers. The NIF compiles from source
+OCEx 0.3 requires **Open CASCADE Technology 7.9.3**, CMake 3.20+, a C++17 compiler,
+FreeType, HarfBuzz 2.6+, pkg-config, and Elixir 1.18+ with Erlang/OTP development headers. The NIF compiles from source
 when Mix compiles the dependency. There are no precompiled NIF downloads.
 
 ## Install the prerequisites
@@ -10,14 +10,14 @@ On macOS, install the Xcode command-line tools and CMake:
 
 ```sh
 xcode-select --install
-brew install cmake
+brew install cmake pkg-config freetype harfbuzz
 ```
 
 On Debian/Ubuntu:
 
 ```sh
 sudo apt-get update
-sudo apt-get install build-essential cmake curl ca-certificates patch
+sudo apt-get install build-essential cmake curl ca-certificates patch pkg-config libfreetype-dev libharfbuzz-dev
 ```
 
 Install Elixir and Erlang using your preferred version manager. If installing OTP
@@ -55,7 +55,7 @@ a Mix project:
 
 ```sh
 mix local.hex --force
-mix hex.package fetch ocex 0.2.0 --unpack --output ocex-toolkit
+mix hex.package fetch ocex 0.3.0 --unpack --output ocex-toolkit
 sh ocex-toolkit/scripts/install-occt.sh
 ```
 
@@ -68,13 +68,13 @@ from the OCEx checkout.
 In a Mix project:
 
 ```elixir
-{:ocex, "~> 0.2.0"}
+{:ocex, "~> 0.3.0"}
 ```
 
 Or in a standalone script, once the toolkit is installed:
 
 ```elixir
-Mix.install([{:ocex, "~> 0.2.0"}])
+Mix.install([{:ocex, "~> 0.3.0"}])
 {:ok, box} = OCEx.box(10, 20, 30)
 {:ok, volume} = OCEx.volume(box)
 true = abs(volume - 6000.0) < 1.0e-6
@@ -97,7 +97,7 @@ prefix or include directory. CMake enforces the exact toolkit version.
 ## Deployment and troubleshooting
 
 The generated NIF lives in the application's build `priv` directory and dynamically
-links OCCT. Deploy the OCCT shared libraries as well as the Elixir application;
+links OCCT, FreeType and HarfBuzz. Deploy these shared libraries as well as the Elixir application;
 keep the library installation accessible at runtime. A Mix release does not
 bundle those external libraries. Build and run on compatible operating systems,
 architectures, OTP installations, and C++ runtimes. Do not copy a macOS NIF to Linux.

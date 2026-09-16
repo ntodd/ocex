@@ -1,6 +1,6 @@
 # OCEx
 
-**Native Elixir geometry, powered by Open CASCADE Technology.**
+**Native Elixir bindings for Open CASCADE Technology.**
 
 OCEx provides immutable, immediate geometry operations through a C++ NIF linked to
 OCCT 7.9.3. Create solids, build profiles, combine and finish bodies, inspect their
@@ -17,7 +17,7 @@ Install the native prerequisites using the [installation guide](guides/installat
 then save this as `plate.exs`:
 
 ```elixir
-Mix.install([{:ocex, "~> 0.2.0"}])
+Mix.install([{:ocex, "~> 0.3.0"}])
 
 {:ok, blank} = OCEx.box(60, 40, 5)
 {:ok, bore} = OCEx.cylinder(4, 7)
@@ -30,11 +30,11 @@ Mix.install([{:ocex, "~> 0.2.0"}])
 IO.puts("Plate volume: #{volume} mm³")
 ```
 
-Run `elixir plate.exs`. For a Mix application, add `{:ocex, "~> 0.2.0"}` to its
+Run `elixir plate.exs`. For a Mix application, add `{:ocex, "~> 0.3.0"}` to its
 dependencies. Mix builds the NIF automatically. The exact OCCT toolkit must remain
 installed at runtime because the NIF dynamically links its libraries.
 
-## What is included
+## Supported operations
 
 | Area | Operations |
 | --- | --- |
@@ -46,11 +46,11 @@ installed at runtime because the NIF dynamically links its libraries.
 | Inspection | Topology, validity, bounds, volume, area, length, centroids, curve/surface information |
 | Exchange | BREP snapshots, STEP import/export, binary STL export, indexed surface mesh |
 
-See the `OCEx` module for each function's contract and the
+See the `OCEx` module for function arguments and return values and the
 [native geometry guide](guides/native-geometry.md) for units, orientation,
 profile requirements, selectors, meshing, and exchange behavior.
 
-## A small, explicit contract
+## API conventions
 
 Every public operation returns `{:ok, value}` or `{:error, reason}`. Shapes are
 opaque, garbage-collected native resources. Modeling operations preserve their
@@ -63,6 +63,13 @@ BEAM dirty schedulers and are serialized for predictable native ownership.
 In-process native faults can crash the VM, and kernel operations cannot be
 forcibly cancelled by terminating an Elixir process. Read
 [errors and lifetimes](guides/errors-and-lifetimes.md) before integrating a service.
+
+## Font-backed text
+
+Version 0.3 converts explicit TTF/OTF font bytes into planar CAD faces using
+FreeType and HarfBuzz. Inspect shaped glyphs, font metrics and geometry-derived
+ink bounds, then extrude and compose the result. See [font-backed text](guides/text.md)
+and the updated native prerequisites in [installation](guides/installation.md).
 
 ## Documentation and development
 

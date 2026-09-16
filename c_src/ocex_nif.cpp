@@ -4,6 +4,7 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
+#include <BRepAlgo_FaceRestrictor.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -79,6 +80,12 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <exception>
+#include <ft2build.h>
+#include FT_FREETYPE_H
+#include FT_OUTLINE_H
+#include <hb.h>
+#include <hb-ot.h>
 
 namespace {
 using Term = ERL_NIF_TERM;
@@ -661,8 +668,18 @@ Term mesh(ErlNifEnv *env, const TopoDS_Shape &original, double tolerance,
                    {"face_types", list(env, face_types)}});
 }
 
+#include "text_geometry.hpp"
+
 Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) {
   auto arity = [&](size_t n) { require(a.size() == n); };
+  if (op == "font_info") {
+    arity(2);
+    return font_info(env, a);
+  }
+  if (op == "text") {
+    arity(7);
+    return text_geometry(env, a);
+  }
   if (op == "resource_count") {
     arity(0);
     return enif_make_uint64(env, state(env)->live_resources.load(std::memory_order_relaxed));

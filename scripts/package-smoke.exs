@@ -1,5 +1,5 @@
 # Copied into an isolated consumer and installed from the built Hex archive.
-Mix.install([{:ocex, "~> 0.2.0"}])
+Mix.install([{:ocex, "~> 0.3.0"}])
 
 false = Code.ensure_loaded?(Smith)
 {:ok, "7.9.3"} = OCEx.version()
@@ -92,3 +92,14 @@ true = abs(distance - 8) < 1.0e-7
 {:ok, %{center: {x, y, z}, axis: _}} = OCEx.edge_info(circle)
 true = abs(x) + abs(y) + abs(z) < 1.0e-7
 IO.puts("Verified archive-installed inspection witnesses and circle datums")
+
+font = File.read!(Path.join(:code.priv_dir(:ocex), "fonts/Graduate-Regular.ttf"))
+{:ok, %{family: "Graduate"}} = OCEx.font_info(font)
+{:ok, text} = OCEx.text("BO TEAM", font, 8)
+{:ok, letters} = OCEx.extrude(text.shape, {0, 0, 1})
+{:ok, true} = OCEx.valid?(letters)
+{:ok, area} = OCEx.area(text.shape)
+{:ok, volume} = OCEx.volume(letters)
+true = abs(area - volume) < 1.0e-5
+{:error, :missing_glyph} = OCEx.text("\u{10FFFF}", font, 8)
+IO.puts("Verified archive-installed FreeType/HarfBuzz text geometry and packaged font")

@@ -16,6 +16,13 @@ for batch <- 1..20 do
       {:ok, edges} = OCEx.edges(shifted)
       for edge <- edges, do: Stress.ok(OCEx.edge_info(edge))
       if rem(i, 10) == 0 do
+        font = File.read!(Path.join(:code.priv_dir(:ocex), "fonts/Graduate-Regular.ttf"))
+        text = Stress.ok(OCEx.text("BO TEAM", font, 5 + rem(i, 3)))
+        glyph_body = Stress.ok(OCEx.extrude(text.shape, {0, 0, 1}))
+        {:ok, true} = OCEx.valid?(glyph_body)
+        Stress.ok(OCEx.mesh(glyph_body))
+        {:error, :invalid_font} = OCEx.font_info("malformed font")
+        {:error, :missing_glyph} = OCEx.text("\u{10FFFF}", font, 10)
         Stress.ok(OCEx.mesh(shifted))
         {:ok, faces} = OCEx.faces(body)
         openings = Enum.filter(faces, fn face ->

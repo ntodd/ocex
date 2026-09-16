@@ -1161,6 +1161,84 @@ defmodule OCEx do
   def polylines(body, tolerance \\ 0.03, angular_tolerance \\ 0.1),
     do: call(:polylines, [ref(body), tolerance, angular_tolerance])
 
+  @doc """
+  Validates scalable Unicode font bytes and returns family, style, units per em,
+  face count and glyph count. `face_index` selects a collection face, default 0.
+  Does not create geometry or consult system fonts. Uses the font errors and
+  64 MiB input limit documented by `text/4`.
+  """
+  @doc group: "Geometry"
+  @spec font_info(binary(), non_neg_integer()) :: result(map())
+  def font_info(bytes, face_index \\ 0), do: call(:font_info, [bytes, face_index])
+
+  @doc """
+  Shapes UTF-8 text from supplied TTF/OTF font **bytes** into planar XY faces.
+
+  `size` is the em size in model units, not the visible capital height. Load
+  bytes with `File.read/1`; no system font lookup or fallback occurs. HarfBuzz
+  shapes one horizontal script/direction run, including kerning and ligatures.
+  Mixed-direction paragraphs, line breaking, variable-font axes, bitmap/color
+  glyphs, and font discovery are not supported. Outline curves remain exact
+  lines and quadratic/cubic Béziers; counters and separate dots are retained.
+  Overlapping glyphs are unioned before returning the filled shape.
+
+  Options: `tracking: 0` (extra model units between shaped clusters; nonzero
+  tracking disables optional ligatures), `face_index: 0` (font collection face),
+  `direction: :auto | :ltr | :rtl`, and `language: ""` (BCP-47 shaping language).
+  Baseline starts at the origin; glyph bearings can extend left or below it.
+
+  Returns a map with `shape`, geometry-derived `ink_bounds`, horizontal `advance`,
+  `ascender`, `descender`, `line_height`, `units_per_em`, `family`, `style`,
+  `direction`, and `glyphs`. Glyph entries have `glyph_id`, UTF-8 byte `cluster`,
+  `origin`, `advance`, and `bounds` (`nil` for spaces). Font metrics and glyph
+  bounds precede union; ink bounds describe the returned geometry.
+
+  Errors include `:invalid_text` (empty, malformed, multiline/control text or
+  >65,536 bytes / 4,096 shaped glyphs), `:empty_text` (no ink), `:invalid_font`
+  (unreadable bytes/face index or >64 MiB), `:unsupported_font`, `:missing_glyph`,
+  and `:invalid_glyph` (outlines cannot form valid faces). Size must exceed
+  1.0e-7. Font parsing is in-process, like other native geometry operations.
+  """
+  @doc group: "Geometry"
+  @spec text(String.t(), binary(), number(), keyword()) :: result(map())
+  def text(text, font, size, opts \\ []) do
+    valid_options =
+      is_list(opts) and Keyword.keyword?(opts) and
+        Kernel.length(opts) == Kernel.length(Enum.uniq_by(opts, &elem(&1, 0))) and
+        Enum.all?(Keyword.keys(opts), &(&1 in [:tracking, :face_index, :direction, :language]))
+
+    cond do
+      not valid_options ->
+        {:error, :invalid_options}
+
+      not (is_binary(text) and String.valid?(text) and byte_size(text) in 1..65_536) ->
+        {:error, :invalid_text}
+
+      Enum.any?(String.to_charlist(text), &(&1 < 32 or &1 in 127..159 or &1 in [0x2028, 0x2029])) ->
+        {:error, :invalid_text}
+
+      Keyword.get(opts, :direction, :auto) not in [:auto, :ltr, :rtl] ->
+        {:error, :invalid_options}
+
+      not is_binary(Keyword.get(opts, :language, "")) ->
+        {:error, :invalid_options}
+
+      true ->
+        with {:ok, layout} <-
+               call(:text, [
+                 text,
+                 font,
+                 size,
+                 Keyword.get(opts, :tracking, 0),
+                 Keyword.get(opts, :face_index, 0),
+                 Atom.to_string(Keyword.get(opts, :direction, :auto)),
+                 Keyword.get(opts, :language, "")
+               ]) do
+          {:ok, %{layout | shape: %Shape{ref: layout.shape}}}
+        end
+    end
+  end
+
   defp options(opts, allowed) do
     if is_list(opts) and Keyword.keyword?(opts) and
          Kernel.length(Keyword.keys(opts)) == Kernel.length(Enum.uniq(Keyword.keys(opts))) and

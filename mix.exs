@@ -110,7 +110,7 @@ defmodule OCEx.MixProject do
   def project do
     [
       app: :ocex,
-      version: "0.2.0",
+      version: "0.3.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       compilers: [:ocex] ++ Mix.compilers(),
@@ -121,12 +121,13 @@ defmodule OCEx.MixProject do
       deps: [{:ex_doc, "~> 0.40", only: :dev, runtime: false}],
       docs: [
         main: "readme",
-        source_ref: "v0.2.0",
-        source_url_pattern: "https://github.com/ntodd/ocex/blob/v0.2.0/%{path}#L%{line}",
+        source_ref: "v0.3.0",
+        source_url_pattern: "https://github.com/ntodd/ocex/blob/v0.3.0/%{path}#L%{line}",
         extras: [
           "README.md",
           "guides/installation.md",
           "guides/native-geometry.md",
+          "guides/text.md",
           "guides/errors-and-lifetimes.md",
           "CHANGELOG.md",
           "LICENSE"
@@ -134,13 +135,13 @@ defmodule OCEx.MixProject do
         groups_for_modules: [Geometry: [OCEx, OCEx.Shape]]
       ],
       package: [
-        licenses: ["MIT"],
+        licenses: ["MIT", "OFL-1.1"],
         links: %{
           "GitHub" => "https://github.com/ntodd/ocex",
           "Open Cascade" => "https://dev.opencascade.org/"
         },
         files:
-          ~w(lib c_src scripts/install-occt.sh scripts/check-allocator.cpp scripts/patches guides mix.exs .formatter.exs README.md CHANGELOG.md LICENSE)
+          ~w(lib c_src priv/fonts scripts/install-occt.sh scripts/check-allocator.cpp scripts/patches guides mix.exs .formatter.exs README.md CHANGELOG.md LICENSE)
       ]
     ]
   end

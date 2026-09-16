@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0
+
+- Shape text from explicit TrueType/OpenType font bytes using FreeType and
+  HarfBuzz. Kerning, ligatures, accents, counters and disconnected glyph regions
+  become native planar faces with exact line and Bézier boundaries.
+- Inspect font metadata, shaped glyph clusters/positions, font metrics and
+  measured ink bounds. Missing glyphs and invalid/empty outlines fail explicitly;
+  no installed-font fallback changes the design.
+- Add native FreeType and HarfBuzz build/runtime prerequisites, a licensed
+  Graduate sample font, and font geometry, ownership and archive checks.
+
 ## 0.2.0
 
 - Add closest-point distance witnesses and circular edge centers/axes for measured inspection.

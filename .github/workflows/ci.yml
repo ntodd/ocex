@@ -31,7 +31,10 @@ jobs:
           version-type: strict
       - name: Native prerequisites
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y build-essential cmake curl ca-certificates patch
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake curl ca-certificates patch pkg-config libfreetype-dev libharfbuzz-dev
+      - name: Native font prerequisites (macOS)
+        if: runner.os == 'macOS'
+        run: brew install pkg-config freetype harfbuzz
       - name: Dependencies
         run: mix deps.get
       - uses: actions/cache@v4
