@@ -1239,6 +1239,66 @@ defmodule OCEx do
     end
   end
 
+  @doc """
+  Samples a wire in traversal order, honoring reversed edges. Closed wires
+  repeat their first point at the end. `tolerance` is linear deflection in
+  model units; angular deflection is 0.1 radians. At most 20,000 points are
+  returned; larger results fail with `:profile_too_complex`.
+  """
+  @spec wire_points(Shape.t(), number()) :: result([vector3()])
+  def wire_points(wire, tolerance \\ 0.01), do: call(:wire_points, [ref(wire), tolerance])
+
+  @doc """
+  Fills closed XY wires using `:nonzero` or `:evenodd` winding. Intersections,
+  holes and disconnected regions are retained; curves remain curves. Empty
+  fill returns an empty compound. Open wires fail with `:open_wire`, non-XY
+  geometry with `:nonplanar_profile`. At most 4096 wires are accepted.
+  """
+  @spec planar_fill([Shape.t()], :nonzero | :evenodd) :: result(Shape.t())
+  def planar_fill(wires, rule \\ :nonzero)
+
+  def planar_fill(wires, rule) when rule in [:nonzero, :evenodd],
+    do: shape(:planar_fill, [refs(wires), Atom.to_string(rule)])
+
+  def planar_fill(_, _), do: {:error, :invalid_argument}
+
+  @doc """
+  Expands an XY wire into planar stroke regions. Width is in model units.
+  Options: `cap: :butt | :round | :square`, `join: :miter | :round | :bevel`,
+  `miter_limit: 4` (ratio to half-width), `tolerance: 0.01` (curve sampling
+  deflection). Defaults are butt caps and miter joins. Straight strokes and
+  round caps are exact; curved centerlines are sampled. Closed wires have
+  joins and no caps. Inputs are copied before native operations.
+  """
+  @spec stroke(Shape.t(), number(), keyword()) :: result(Shape.t())
+  def stroke(wire, width, opts \\ []) do
+    with true <- is_list(opts) and Keyword.keyword?(opts),
+         true <- Enum.all?(Keyword.keys(opts), &(&1 in [:cap, :join, :miter_limit, :tolerance])),
+         true <- Kernel.length(opts) == Kernel.length(Enum.uniq_by(opts, &elem(&1, 0))),
+         cap when cap in [:butt, :round, :square] <- Keyword.get(opts, :cap, :butt),
+         join when join in [:miter, :round, :bevel] <- Keyword.get(opts, :join, :miter) do
+      shape(:stroke, [
+        ref(wire),
+        width,
+        Atom.to_string(cap),
+        Atom.to_string(join),
+        Keyword.get(opts, :miter_limit, 4),
+        Keyword.get(opts, :tolerance, 0.01)
+      ])
+    else
+      _ -> {:error, :invalid_options}
+    end
+  end
+
+  @doc """
+  Applies an invertible XY affine matrix `{a,b,c,d,e,f}`: x'=ax+cy+e,
+  y'=bx+dy+f, z'=z. Supports nonuniform scale and shear, copying the input.
+  Singular matrices fail with `:invalid_argument`.
+  """
+  @spec affine_transform(Shape.t(), {number(), number(), number(), number(), number(), number()}) ::
+          result(Shape.t())
+  def affine_transform(shape, matrix), do: shape(:affine_transform, [ref(shape), matrix])
+
   defp options(opts, allowed) do
     if is_list(opts) and Keyword.keyword?(opts) and
          Kernel.length(Keyword.keys(opts)) == Kernel.length(Enum.uniq(Keyword.keys(opts))) and
