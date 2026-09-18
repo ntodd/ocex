@@ -71,6 +71,14 @@ FreeType and HarfBuzz. Inspect shaped glyphs, font metrics and geometry-derived
 ink bounds, then extrude and compose the result. See [font-backed text](guides/text.md)
 and the updated native prerequisites in [installation](guides/installation.md).
 
+## Planar artwork
+
+`OCEx.planar_fill/2` builds XY regions from closed wires using nonzero or
+even-odd fill rules. `OCEx.stroke/3` expands an open or closed wire with explicit
+width, cap, join and sampling settings. `OCEx.affine_transform/2` supports
+nonuniform XY placement; `OCEx.wire_points/2` samples boundaries in traversal
+order. Smith interprets SVG documents and turns these operations into recipes.
+
 ## Documentation and development
 
 - [Installation and deployment](guides/installation.md)

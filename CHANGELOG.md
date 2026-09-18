@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Add XY planar filling with nonzero/even-odd rules, including intersecting
+  contours, holes and multiple regions while retaining native curves.
+- Add stroke expansion with butt/round/square caps and miter/round/bevel joins,
+  bounded curve sampling, XY affine transformations and ordered wire sampling.
+- Preserve immutable ownership throughout splitting, meshing and conversion.
+- Build exact disks for circular strokes that close the inner hole.
+- Use adaptive area and Gauss–Kronrod volume integration for reliable
+  measurements of curved profiles and their extrusions.
+
 ## 0.3.0
 
 - Shape text from explicit TrueType/OpenType font bytes using FreeType and

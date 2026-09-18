@@ -13,6 +13,8 @@
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRepBuilderAPI_GTransform.hxx>
+#include <gp_GTrsf.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
@@ -75,6 +77,7 @@
 #include <gp_Pln.hxx>
 #include <gp_Sphere.hxx>
 #include <memory>
+#include <limits>
 #include <mutex>
 #include <new>
 #include <sstream>
@@ -237,9 +240,10 @@ GProp_GProps properties(const TopoDS_Shape &value, const std::string &kind) {
   if (kind == "length")
     BRepGProp::LinearProperties(value, props, true, false);
   else if (kind == "area")
-    BRepGProp::SurfaceProperties(value, props, true, false);
+    BRepGProp::SurfaceProperties(value, props, 1.0e-9, true);
   else
-    BRepGProp::VolumeProperties(value, props, true, true, false);
+    BRepGProp::VolumePropertiesGK(value, props, 1.0e-9, true, true,
+                                 kind == "center_of_mass", false, true);
   return props;
 }
 Term edge_info(ErlNifEnv *env, const TopoDS_Edge &edge) {
@@ -669,9 +673,60 @@ Term mesh(ErlNifEnv *env, const TopoDS_Shape &original, double tolerance,
 }
 
 #include "text_geometry.hpp"
+#include "planar_geometry.hpp"
 
 Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) {
   auto arity = [&](size_t n) { require(a.size() == n); };
+  if (op == "wire_points") {
+    arity(2);
+    auto wire = TopoDS::Wire(copy(shape(env,a[0],TopAbs_WIRE).value));
+    std::vector<Term> points;
+    for (auto &p : wire_samples(wire,positive(env,a[1]),false)) points.push_back(point(env,p));
+    return list(env,points);
+  }
+  if (op == "planar_fill") {
+    arity(2);
+    auto values = terms(env, a[0]);
+    require(values.size() <= 4096, "profile_too_complex");
+    auto rule = string(env, a[1]);
+    require(rule == "nonzero" || rule == "evenodd");
+    std::vector<TopoDS_Wire> wires;
+    for (auto value : values) wires.push_back(TopoDS::Wire(copy(shape(env, value, TopAbs_WIRE).value)));
+    return resource(env, planar_fill(wires, rule == "evenodd"));
+  }
+  if (op == "stroke") {
+    arity(6);
+    auto wire = TopoDS::Wire(copy(shape(env, a[0], TopAbs_WIRE).value));
+    return resource(env, planar_stroke(wire, positive(env,a[1]), string(env,a[2]),
+      string(env,a[3]), positive(env,a[4]), positive(env,a[5])));
+  }
+  if (op == "affine_transform") {
+    arity(2);
+    int count; const Term *values;
+    require(enif_get_tuple(env,a[1],&count,&values) && count==6);
+    double m[6]; for (int i=0;i<6;++i) m[i]=scalar(env,values[i]);
+    require(std::abs(m[0]*m[3]-m[1]*m[2])>1e-15);
+    auto source = copy(shape(env,a[0]).value);
+    // Preserve analytic curves for XY similarities. General affine transforms
+    // require GTransform's exact rational B-splines. Scaling Z is immaterial
+    // only when the entire source is on Z=0.
+    double sx2=m[0]*m[0]+m[1]*m[1], sy2=m[2]*m[2]+m[3]*m[3];
+    Bnd_Box box; BRepBndLib::AddOptimal(source,box,false,false);
+    if (!box.IsVoid() && box.CornerMin().Z()==0.0 &&
+        box.CornerMax().Z()==0.0 &&
+        std::abs(sx2-sy2)<1e-12*std::max(sx2,sy2) &&
+        std::abs(m[0]*m[2]+m[1]*m[3])<1e-12*std::max(sx2,sy2)) {
+      gp_Trsf similarity;
+      similarity.SetValues(m[0],m[2],0,m[4],m[1],m[3],0,m[5],0,0,std::sqrt(sx2),0);
+      return resource(env,BRepBuilderAPI_Transform(source,similarity,true).Shape());
+    }
+    gp_GTrsf transform;
+    transform.SetVectorialPart(gp_Mat(m[0],m[2],0,m[1],m[3],0,0,0,1));
+    transform.SetTranslationPart(gp_XYZ(m[4],m[5],0));
+    BRepBuilderAPI_GTransform placed(source,transform,true);
+    require(placed.IsDone(),"operation_failed");
+    return resource(env,placed.Shape());
+  }
   if (op == "font_info") {
     arity(2);
     return font_info(env, a);
