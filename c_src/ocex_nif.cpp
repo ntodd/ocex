@@ -106,6 +106,10 @@ struct Shape {
   TopoDS_Shape value;
   std::shared_ptr<const int> revision;
   std::atomic<size_t> *live_resources;
+  // Shapes are immutable. This bounded cache dies with its resource and is
+  // accessed only while call() holds State::mutex. New resources start cold.
+  bool has_volume = false;
+  double volume = 0;
 };
 struct State {
   ErlNifResourceType *shape_type = nullptr;
@@ -313,11 +317,13 @@ Term face_info(ErlNifEnv *env, const TopoDS_Face &face) {
                    {"uv_bounds", enif_make_tuple4(env, number(env, u0), number(env, u1),
                                                   number(env, v0), number(env, v1))}});
 }
-template <class Operation> TopoDS_Shape boolean(const TopoDS_Shape &a, const TopoDS_Shape &b) {
+template <class Operation>
+TopoDS_Shape boolean_many(const TopoDS_Shape &a, const std::vector<TopoDS_Shape> &values) {
   Operation operation;
   TopTools_ListOfShape arguments, tools;
   arguments.Append(copy(a));
-  tools.Append(copy(b));
+  for (const auto &value : values)
+    tools.Append(copy(value));
   operation.SetArguments(arguments);
   operation.SetTools(tools);
   operation.SetNonDestructive(true);
@@ -325,6 +331,9 @@ template <class Operation> TopoDS_Shape boolean(const TopoDS_Shape &a, const Top
   operation.Build();
   require(operation.IsDone() && !operation.HasErrors(), "operation_failed");
   return operation.Shape();
+}
+template <class Operation> TopoDS_Shape boolean(const TopoDS_Shape &a, const TopoDS_Shape &b) {
+  return boolean_many<Operation>(a, {b});
 }
 // Accept collections of the requested topology without silently dropping free
 // edges/faces from an otherwise valid compound.
@@ -1183,6 +1192,17 @@ Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) 
       builder.Add(result, copy(shape(env, item).value));
     return resource(env, result);
   }
+  if (op == "cut_many" || op == "fuse_many") {
+    arity(2);
+    auto &body = shape(env, a[0]).value;
+    std::vector<TopoDS_Shape> tools;
+    for (auto item : terms(env, a[1]))
+      tools.push_back(shape(env, item).value);
+    require(!tools.empty());
+    if (op == "cut_many")
+      return resource(env, boolean_many<BRepAlgoAPI_Cut>(body, tools));
+    return resource(env, boolean_many<BRepAlgoAPI_Fuse>(body, tools));
+  }
   if (op == "cut" || op == "fuse" || op == "common") {
     arity(2);
     auto &left = shape(env, a[0]).value;
@@ -1267,17 +1287,28 @@ Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) 
   }
   if (op == "volume" || op == "area" || op == "length" || op == "center_of_mass") {
     arity(1);
-    auto props = properties(shape(env, a[0]).value, op);
+    auto &body = shape(env, a[0]);
+    if (op == "volume" && body.has_volume)
+      return number(env, body.volume);
+    auto props = properties(body.value, op);
     if (op == "center_of_mass") {
       require(std::abs(props.Mass()) > 0, "empty_shape");
       return point(env, props.CentreOfMass());
     }
-    return number(env, props.Mass());
+    auto result = number(env, props.Mass());
+    if (op == "volume") {
+      body.volume = props.Mass();
+      body.has_volume = true;
+    }
+    return result;
   }
-  if (op == "bounds") {
+  if (op == "bounds" || op == "bounds_envelope") {
     arity(1);
     Bnd_Box box;
-    BRepBndLib::AddOptimal(shape(env, a[0]).value, box, false, false);
+    if (op == "bounds_envelope")
+      BRepBndLib::Add(shape(env, a[0]).value, box, false);
+    else
+      BRepBndLib::AddOptimal(shape(env, a[0]).value, box, false, false);
     require(!box.IsVoid(), "empty_shape");
     double x0, y0, z0, x1, y1, z1;
     box.Get(x0, y0, z0, x1, y1, z1);

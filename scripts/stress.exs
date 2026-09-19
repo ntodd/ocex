@@ -10,6 +10,16 @@ for batch <- 1..20 do
     for i <- 1..50 do
       body = Stress.ok(OCEx.box(10, 20, 30))
       shifted = Stress.ok(OCEx.translate(body, {i, 0, 0}))
+      if rem(i, 10) == 0 do
+        tool = Stress.ok(OCEx.box(1, 1, 31))
+        batch = Stress.ok(OCEx.cut_many(body, [tool]))
+        {:ok, true} = OCEx.valid?(batch)
+        {:ok, cut_volume} = OCEx.volume(batch)
+        true = abs(cut_volume - 5970) < 1.0e-6
+        reunited = Stress.ok(OCEx.fuse_many(batch, [body]))
+        {:ok, union_volume} = OCEx.volume(reunited)
+        true = abs(union_volume - 6000) < 1.0e-6
+      end
       {:ok, true} = OCEx.valid?(shifted)
       {:ok, volume} = OCEx.volume(shifted)
       if abs(volume - 6000) > 1.0e-6, do: raise("invalid stress geometry")

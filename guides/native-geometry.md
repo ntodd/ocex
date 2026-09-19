@@ -56,6 +56,15 @@ true = abs(separation.distance - 3) < 1.0e-7
 
 ## Curves and cleanup
 
+For independent groups of cutters or additions, `OCEx.cut_many/2` and
+`OCEx.fuse_many/2` submit a nonempty tool list to one Boolean operation.
+Overlapping tools are supported. Inputs remain immutable and the final result
+is validated; call `clean/1` afterward when same-domain cleanup is needed.
+These operations avoid constructing and cleaning every pairwise intermediate
+result. Batching may change topology and does not guarantee a speedup for small
+or difficult intersections. Keep pairwise operations when intermediate feature
+results matter. An overlapping compound is not a substitute for a list of tools.
+
 `arc(center, normal, x_direction, radius, start_degrees, sweep_degrees)` constructs a directed circular arc in an arbitrary plane. A negative sweep runs clockwise; its magnitude must be at most 360 degrees. The x direction is projected onto the plane by OCCT.
 
 `spline(points, {start_tangent, end_tangent})` interpolates all supplied points using `GeomAPI_Interpolate`, with tolerance 1e-6, automatic chord-length parameters, and automatically scaled endpoint tangents. Omitting tangents leaves endpoints unconstrained. This API supports nonperiodic interpolation.
