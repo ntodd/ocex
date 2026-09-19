@@ -1,6 +1,7 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
+#include <BOPAlgo_PaveFiller.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
@@ -327,7 +328,14 @@ TopoDS_Shape boolean_many(const TopoDS_Shape &a, const std::vector<TopoDS_Shape>
   operation.SetArguments(arguments);
   operation.SetTools(tools);
   operation.SetNonDestructive(true);
-  operation.SetRunParallel(false);
+  // Small booleans lose more to scheduling than they gain. Parallelize only
+  // batches against substantial topology; use OCCT's pool without changing
+  // its process-wide size or releasing our resource/state lock.
+  int faces = 0;
+  if (values.size() >= 3)
+    for (TopExp_Explorer e(a, TopAbs_FACE); e.More() && faces < 128; e.Next())
+      ++faces;
+  operation.SetRunParallel(faces >= 128);
   operation.Build();
   require(operation.IsDone() && !operation.HasErrors(), "operation_failed");
   return operation.Shape();
@@ -1192,6 +1200,37 @@ Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) 
       builder.Add(result, copy(shape(env, item).value));
     return resource(env, result);
   }
+  if (op == "cut_removed") {
+    arity(2);
+    TopTools_ListOfShape arguments, tools, all;
+    arguments.Append(copy(shape(env, a[0]).value));
+    tools.Append(copy(shape(env, a[1]).value));
+    all.Append(arguments.First());
+    all.Append(tools.First());
+    // Cut and common use the same intersections. Share the expensive
+    // interference calculation rather than running two complete booleans.
+    BOPAlgo_PaveFiller filler;
+    filler.SetArguments(all);
+    filler.SetNonDestructive(true);
+    filler.SetRunParallel(false);
+    filler.Perform();
+    require(!filler.HasErrors(), "operation_failed");
+    BRepAlgoAPI_Cut cut(filler);
+    cut.SetArguments(arguments);
+    cut.SetTools(tools);
+    cut.SetNonDestructive(true);
+    cut.Build();
+    require(cut.IsDone() && !cut.HasErrors(), "operation_failed");
+    Term result = resource(env, cut.Shape());
+    BRepAlgoAPI_Common common(filler);
+    common.SetArguments(arguments);
+    common.SetTools(tools);
+    common.SetNonDestructive(true);
+    common.Build();
+    require(common.IsDone() && !common.HasErrors(), "operation_failed");
+    require(BRepCheck_Analyzer(common.Shape()).IsValid(), "invalid_shape");
+    return enif_make_tuple2(env, result, number(env, properties(common.Shape(), "volume").Mass()));
+  }
   if (op == "cut_many" || op == "fuse_many") {
     arity(2);
     auto &body = shape(env, a[0]).value;
@@ -1215,7 +1254,7 @@ Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) 
   }
   if (op == "translate" || op == "rotate" || op == "scale") {
     arity(op == "rotate" ? 4 : 2);
-    auto body = copy(shape(env, a[0]).value);
+    const auto &body = shape(env, a[0]).value;
     gp_Trsf transform;
     if (op == "translate")
       transform.SetTranslation(vector(env, a[1]));
@@ -1224,6 +1263,8 @@ Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) 
     else
       transform.SetRotation(gp_Ax1(xyz(env, a[1]), gp_Dir(vector(env, a[2], true))),
                             scalar(env, a[3]) * std::acos(-1) / 180);
+    // Copy=true already duplicates the topology and geometry. An explicit
+    // BRepBuilderAPI_Copy before it duplicated the whole shape a second time.
     return resource(env, BRepBuilderAPI_Transform(body, transform, true).Shape());
   }
   if (op == "fillet" || op == "chamfer") {

@@ -16,6 +16,10 @@ for batch <- 1..20 do
         {:ok, true} = OCEx.valid?(batch)
         {:ok, cut_volume} = OCEx.volume(batch)
         true = abs(cut_volume - 5970) < 1.0e-6
+        {:ok, checked, removed} = OCEx.Internal.cut_removed(body, tool)
+        {:ok, true} = OCEx.valid?(checked)
+        true = abs(removed - 30) < 1.0e-6
+        Stress.ok(OCEx.Internal.envelope(checked))
         reunited = Stress.ok(OCEx.fuse_many(batch, [body]))
         {:ok, union_volume} = OCEx.volume(reunited)
         true = abs(union_volume - 6000) < 1.0e-6
@@ -77,6 +81,8 @@ for batch <- 1..20 do
       for malformed <- [nil, [], %{}, make_ref(), [1 | 2], <<0, 255>>] do
         {:error, _} = OCEx.Native.call(:box, malformed)
         {:error, _} = OCEx.Native.call(:volume, [malformed])
+        {:error, _} = OCEx.Native.call(:bounds_envelope, [malformed])
+        {:error, _} = OCEx.Native.call(:cut_removed, [body.ref, malformed])
       end
     end
     :done
@@ -89,4 +95,4 @@ for batch <- 1..20 do
   end)
   if Stress.count() > baseline, do: raise("native resources leaked in batch #{batch}")
 end
-IO.puts("Stress passed: 1,000 shape workloads, 100 meshes, 100 shells, 100 lofts, 100 sweeps, 100 tori and mirrors, 100 drawing/sampling and split/section/draft/offset/thickening workloads, 12,000 malformed calls; native resources returned to baseline.")
+IO.puts("Stress passed: 1,000 shape workloads, 100 checked cuts, 100 meshes, 100 shells, 100 lofts, 100 sweeps, 100 tori and mirrors, 100 drawing/sampling and split/section/draft/offset/thickening workloads, 24,000 malformed calls; native resources returned to baseline.")

@@ -20,6 +20,11 @@ All public geometry functions return `{:ok, value}` or `{:error, reason}`. Nativ
 
 ## API
 
+Large multi-tool Boolean operations may use OCCT's internal parallel execution.
+Small operations remain serial to avoid scheduling overhead. Calls still retain
+the native state/resource lock, so concurrent Elixir callers do not imply
+parallel execution of independent operations. Input geometry remains immutable.
+
 | Area       | Functions                                                                                                                                                     |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Primitives | `box/3`, `cylinder/2`, `sphere/1`, `cone/3`, `torus/2`                                                                                                                   |

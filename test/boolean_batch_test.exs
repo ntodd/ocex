@@ -35,6 +35,26 @@ defmodule OCEx.BooleanBatchTest do
     end
   end
 
+  test "large-topology batches remain valid and immutable under repeated calls" do
+    unit = ok(OCEx.box(1, 1, 1))
+    pieces = for i <- 0..23, do: ok(OCEx.translate(unit, {i * 2, 0, 0}))
+    body = ok(OCEx.compound(pieces))
+
+    tools =
+      for i <- 0..2,
+          do: ok(OCEx.cylinder(0.2, 3)) |> OCEx.translate({i * 2 + 0.5, 0.5, -1}) |> ok()
+
+    before = Enum.map([body | tools], &ok(OCEx.to_brep(&1)))
+
+    for _ <- 1..3 do
+      result = ok(OCEx.cut_many(body, tools))
+      assert_valid(result)
+      assert_in_delta volume(result), 24 - 0.12 * :math.pi(), 1.0e-7
+    end
+
+    assert Enum.map([body | tools], &ok(OCEx.to_brep(&1))) == before
+  end
+
   test "concurrent batches retain source and result independence" do
     body = ok(OCEx.box(10, 10, 10))
     tool = ok(OCEx.box(2, 2, 12)) |> OCEx.translate({4, 4, -1}) |> ok()
