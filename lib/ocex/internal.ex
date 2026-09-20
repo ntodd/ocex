@@ -14,4 +14,13 @@ defmodule OCEx.Internal do
   end
 
   def cut_removed(_, _), do: {:error, :invalid_shape}
+
+  def transform_chain(%OCEx.Shape{ref: ref}, steps) do
+    case OCEx.Native.call(:transform_chain, [ref, steps]) do
+      {:ok, ref} -> {:ok, %OCEx.Shape{ref: ref}}
+      error -> error
+    end
+  end
+
+  def transform_chain(_, _), do: {:error, :invalid_shape}
 end

@@ -1252,6 +1252,50 @@ Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) 
       return resource(env, boolean<BRepAlgoAPI_Fuse>(left, right));
     return resource(env, boolean<BRepAlgoAPI_Common>(left, right));
   }
+  if (op == "transform_chain") {
+    arity(2);
+    const auto &body = shape(env, a[0]).value;
+    auto steps = terms(env, a[1]);
+    require(!steps.empty());
+    // Be conservative outside ordinary modeling coordinates. Cancellation at
+    // extreme magnitudes can hide an invalid intermediate shape; the evaluator
+    // must replay those operations with their original validation boundaries.
+    Bnd_Box bounds;
+    BRepBndLib::Add(body, bounds, false);
+    require(!bounds.IsVoid() && !bounds.IsOpen());
+    double x0, y0, z0, x1, y1, z1;
+    bounds.Get(x0, y0, z0, x1, y1, z1);
+    for (double value : {x0, y0, z0, x1, y1, z1})
+      require(std::isfinite(value) && std::abs(value) <= 1.0e6);
+    gp_Trsf combined;
+    for (Term step : steps) {
+      int count;
+      const Term *pair;
+      require(enif_get_tuple(env, step, &count, &pair) && count == 2);
+      auto args = terms(env, pair[1]);
+      gp_Trsf next;
+      if (enif_is_identical(pair[0], atom(env, "translate"))) {
+        require(args.size() == 1);
+        next.SetTranslation(vector(env, args[0]));
+      } else if (enif_is_identical(pair[0], atom(env, "rotate"))) {
+        require(args.size() == 3);
+        next.SetRotation(gp_Ax1(xyz(env, args[0]), gp_Dir(vector(env, args[1], true))),
+                         scalar(env, args[2]) * std::acos(-1) / 180);
+      } else if (enif_is_identical(pair[0], atom(env, "mirror"))) {
+        require(args.size() == 2);
+        next.SetMirror(gp_Ax2(xyz(env, args[0]), gp_Dir(vector(env, args[1], true))));
+      } else {
+        throw Error{"invalid_argument"};
+      }
+      // Each following operation acts in world space: next * combined.
+      combined.PreMultiply(next);
+      for (int row = 1; row <= 3; ++row)
+        for (int col = 1; col <= 4; ++col)
+          require(std::isfinite(combined.Value(row, col)) &&
+                  std::abs(combined.Value(row, col)) <= 1.0e6);
+    }
+    return resource(env, BRepBuilderAPI_Transform(body, combined, true).Shape());
+  }
   if (op == "translate" || op == "rotate" || op == "scale") {
     arity(op == "rotate" ? 4 : 2);
     const auto &body = shape(env, a[0]).value;

@@ -5,6 +5,11 @@ assemblies, and printable bundles on top. Use OCEx directly when you need native
 subshapes or an operation's low-level result. A BREP (boundary representation)
 records surfaces, curves, and their topology; a mesh approximates them with triangles.
 
+Smith can compose consecutive rigid placements through an internal OCEx helper,
+applying them with a single copying transform and final validity check. Public
+transform calls keep their existing behavior. Empty or extreme-coordinate shapes
+use Smith's sequential fallback so intermediate failures remain observable.
+
 ## Values and units
 
 All public geometry functions return `{:ok, value}` or `{:error, reason}`. Native failures produce a finite set of error atoms. Outputs are checked with OCCT's shape analyzer before being exposed. This check is supplemented by operation preconditions and analytic tests; it is not a proof that arbitrary geometry meets the caller's intent.

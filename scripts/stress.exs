@@ -11,6 +11,15 @@ for batch <- 1..20 do
       body = Stress.ok(OCEx.box(10, 20, 30))
       shifted = Stress.ok(OCEx.translate(body, {i, 0, 0}))
       if rem(i, 10) == 0 do
+        composed = Stress.ok(OCEx.Internal.transform_chain(body, [
+          {:rotate, [{1, 2, 3}, {0, 0, 1}, 37]},
+          {:translate, [{i, 2, 3}]},
+          {:mirror, [{0, 0, 0}, {0, 1, 0}]}
+        ]))
+        true = abs(Stress.ok(OCEx.volume(composed)) - 6000) < 1.0e-6
+        Stress.ok(OCEx.mesh(composed))
+      end
+      if rem(i, 10) == 0 do
         tool = Stress.ok(OCEx.box(1, 1, 31))
         batch = Stress.ok(OCEx.cut_many(body, [tool]))
         {:ok, true} = OCEx.valid?(batch)
@@ -83,6 +92,7 @@ for batch <- 1..20 do
         {:error, _} = OCEx.Native.call(:volume, [malformed])
         {:error, _} = OCEx.Native.call(:bounds_envelope, [malformed])
         {:error, _} = OCEx.Native.call(:cut_removed, [body.ref, malformed])
+        {:error, _} = OCEx.Native.call(:transform_chain, [body.ref, malformed])
       end
     end
     :done
@@ -95,4 +105,4 @@ for batch <- 1..20 do
   end)
   if Stress.count() > baseline, do: raise("native resources leaked in batch #{batch}")
 end
-IO.puts("Stress passed: 1,000 shape workloads, 100 checked cuts, 100 meshes, 100 shells, 100 lofts, 100 sweeps, 100 tori and mirrors, 100 drawing/sampling and split/section/draft/offset/thickening workloads, 24,000 malformed calls; native resources returned to baseline.")
+IO.puts("Stress passed: 1,000 shape workloads, 100 checked cuts, 100 transform chains, 100 meshes, 100 shells, 100 lofts, 100 sweeps, 100 tori and mirrors, 100 drawing/sampling and split/section/draft/offset/thickening workloads, 30,000 malformed calls; native resources returned to baseline.")
