@@ -1,5 +1,7 @@
 # Copied into an isolated consumer and installed from the built Hex archive.
-Mix.install([{:ocex, "~> 0.3.0"}])
+ocex_version = System.fetch_env!("OCEX_VERSION")
+Mix.install([{:ocex, ocex_version}])
+^ocex_version = Application.spec(:ocex, :vsn) |> to_string()
 
 false = Code.ensure_loaded?(Smith)
 {:ok, "7.9.3"} = OCEx.version()

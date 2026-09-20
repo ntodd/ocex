@@ -1,7 +1,11 @@
-# Releasing OCEx 0.3
+# Releasing OCEx
 
-This repository publishes `ocex` version `0.3.0` from tag `v0.3.0`.
-Publish OCEx before Smith 0.3. OCEx has no runtime Hex dependencies.
+For both packages, follow the [coordinated release checklist](https://github.com/ntodd/smith/blob/main/docs/releasing.md).
+OCEx 0.4.0 is already published; do not move its tag. The commands below are a
+template for future releases: substitute the new version.
+
+This repository publishes `ocex` version `0.4.0` from tag `v0.4.0`.
+Publish OCEx before Smith. OCEx has no runtime Hex dependencies.
 
 ## Prepare the source
 
@@ -14,12 +18,12 @@ Publish OCEx before Smith 0.3. OCEx has no runtime Hex dependencies.
 4. Create the annotated tag at that verified commit, unless it already exists:
 
 ```sh
-git tag -a v0.3.0 -m "OCEx 0.3.0"
-git push origin v0.3.0
+git tag -a v0.4.0 -m "OCEx 0.4.0"
+git push origin v0.4.0
 ```
 
-The version in `mix.exs`, ExDoc source links, changelog, and smoke-test dependency
-must agree. Do not move a published release tag.
+The version in `mix.exs`, ExDoc source links, and changelog must agree. The archive smoke script reads the version from
+`mix.exs` automatically. Do not move a published release tag.
 
 ## Publish to Hex
 
@@ -45,13 +49,13 @@ release_check=$(mktemp -d)
 cp scripts/package-smoke.exs "$release_check/model.exs"
 (
   cd "$release_check"
-  env -u OCEX_PATH HEX_HOME="$release_check/hex" \
+  env -u OCEX_PATH OCEX_VERSION=0.4.0 HEX_HOME="$release_check/hex" \
     MIX_INSTALL_DIR="$release_check/install" elixir model.exs
 )
 ```
 
-Check [OCEx 0.3 HexDocs](https://hexdocs.pm/ocex/0.3.0/), including guide and source
-links. Once the public installation passes, Smith can resolve OCEx 0.3 from Hex.
+Check [OCEx 0.4.0 HexDocs](https://hexdocs.pm/ocex/0.4.0/), including guide and source
+links. Once the public installation passes, Smith can resolve OCEx 0.4.0 from Hex.
 
 ## Native support
 
