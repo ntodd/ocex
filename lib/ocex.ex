@@ -722,6 +722,19 @@ defmodule OCEx do
   def cut(body, tool), do: shape(:cut, [ref(body), ref(tool)])
 
   @doc """
+  Subtracts a nonempty list of tools in one Boolean operation.
+
+  Overlapping tools are subtracted once. All inputs are preserved, and the
+  result is validated. Unlike repeated `cut/2` calls, intermediate shapes
+  are not produced. The result may contain multiple solids or be empty.
+  Use `clean/1` to merge same-domain faces afterward. Empty or malformed
+  tool lists return `{:error, :invalid_argument}`.
+  """
+  @doc group: "Modeling"
+  @spec cut_many(Shape.t(), [Shape.t()]) :: result(Shape.t())
+  def cut_many(body, tools), do: shape(:cut_many, [ref(body), refs(tools)])
+
+  @doc """
   Unites two shapes, preserving both inputs.
 
   Disjoint solids remain separate solids in the result. Touching or
@@ -731,6 +744,18 @@ defmodule OCEx do
   @doc group: "Modeling"
   @spec fuse(Shape.t(), Shape.t()) :: result(Shape.t())
   def fuse(body, tool), do: shape(:fuse, [ref(body), ref(tool)])
+
+  @doc """
+  Unites a body and a nonempty list of tools in one Boolean operation.
+
+  Tools may overlap each other or the body. Disjoint solids remain separate.
+  All inputs are preserved and the result is validated; intermediate pairwise
+  results are not produced. Use `clean/1` to merge same-domain faces afterward.
+  Empty or malformed tool lists return `{:error, :invalid_argument}`.
+  """
+  @doc group: "Modeling"
+  @spec fuse_many(Shape.t(), [Shape.t()]) :: result(Shape.t())
+  def fuse_many(body, tools), do: shape(:fuse_many, [ref(body), refs(tools)])
 
   @doc """
   Returns the geometric intersection of two shapes.
@@ -848,6 +873,9 @@ defmodule OCEx do
 
   @doc """
   Measures signed volume from closed shells, in cubic model units.
+
+  Repeated measurements of the same immutable shape resource reuse its first
+  successful measurement, without changing integration precision.
 
   Shared topology is counted once. Independent overlapping solids in a
   compound are not Boolean-unioned before measurement. Edges, open faces,

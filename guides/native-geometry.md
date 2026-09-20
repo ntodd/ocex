@@ -5,6 +5,11 @@ assemblies, and printable bundles on top. Use OCEx directly when you need native
 subshapes or an operation's low-level result. A BREP (boundary representation)
 records surfaces, curves, and their topology; a mesh approximates them with triangles.
 
+Smith can compose consecutive rigid placements through an internal OCEx helper,
+applying them with a single copying transform and final validity check. Public
+transform calls keep their existing behavior. Empty or extreme-coordinate shapes
+use Smith's sequential fallback so intermediate failures remain observable.
+
 ## Values and units
 
 All public geometry functions return `{:ok, value}` or `{:error, reason}`. Native failures produce a finite set of error atoms. Outputs are checked with OCCT's shape analyzer before being exposed. This check is supplemented by operation preconditions and analytic tests; it is not a proof that arbitrary geometry meets the caller's intent.
@@ -19,6 +24,11 @@ All public geometry functions return `{:ok, value}` or `{:error, reason}`. Nativ
 - `volume/1` and `center_of_mass/1` consider closed volumes. `area/1` and `length/1` count shared faces/edges once. Coincident but independently created topology is not deduplicated geometrically.
 
 ## API
+
+Large multi-tool Boolean operations may use OCCT's internal parallel execution.
+Small operations remain serial to avoid scheduling overhead. Calls still retain
+the native state/resource lock, so concurrent Elixir callers do not imply
+parallel execution of independent operations. Input geometry remains immutable.
 
 | Area       | Functions                                                                                                                                                     |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -55,6 +65,15 @@ true = abs(separation.distance - 3) < 1.0e-7
 ```
 
 ## Curves and cleanup
+
+For independent groups of cutters or additions, `OCEx.cut_many/2` and
+`OCEx.fuse_many/2` submit a nonempty tool list to one Boolean operation.
+Overlapping tools are supported. Inputs remain immutable and the final result
+is validated; call `clean/1` afterward when same-domain cleanup is needed.
+These operations avoid constructing and cleaning every pairwise intermediate
+result. Batching may change topology and does not guarantee a speedup for small
+or difficult intersections. Keep pairwise operations when intermediate feature
+results matter. An overlapping compound is not a substitute for a list of tools.
 
 `arc(center, normal, x_direction, radius, start_degrees, sweep_degrees)` constructs a directed circular arc in an arbitrary plane. A negative sweep runs clockwise; its magnitude must be at most 360 degrees. The x direction is projected onto the plane by OCCT.
 

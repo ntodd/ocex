@@ -1,6 +1,7 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
+#include <BOPAlgo_PaveFiller.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
@@ -106,6 +107,10 @@ struct Shape {
   TopoDS_Shape value;
   std::shared_ptr<const int> revision;
   std::atomic<size_t> *live_resources;
+  // Shapes are immutable. This bounded cache dies with its resource and is
+  // accessed only while call() holds State::mutex. New resources start cold.
+  bool has_volume = false;
+  double volume = 0;
 };
 struct State {
   ErlNifResourceType *shape_type = nullptr;
@@ -313,18 +318,30 @@ Term face_info(ErlNifEnv *env, const TopoDS_Face &face) {
                    {"uv_bounds", enif_make_tuple4(env, number(env, u0), number(env, u1),
                                                   number(env, v0), number(env, v1))}});
 }
-template <class Operation> TopoDS_Shape boolean(const TopoDS_Shape &a, const TopoDS_Shape &b) {
+template <class Operation>
+TopoDS_Shape boolean_many(const TopoDS_Shape &a, const std::vector<TopoDS_Shape> &values) {
   Operation operation;
   TopTools_ListOfShape arguments, tools;
   arguments.Append(copy(a));
-  tools.Append(copy(b));
+  for (const auto &value : values)
+    tools.Append(copy(value));
   operation.SetArguments(arguments);
   operation.SetTools(tools);
   operation.SetNonDestructive(true);
-  operation.SetRunParallel(false);
+  // Small booleans lose more to scheduling than they gain. Parallelize only
+  // batches against substantial topology; use OCCT's pool without changing
+  // its process-wide size or releasing our resource/state lock.
+  int faces = 0;
+  if (values.size() >= 3)
+    for (TopExp_Explorer e(a, TopAbs_FACE); e.More() && faces < 128; e.Next())
+      ++faces;
+  operation.SetRunParallel(faces >= 128);
   operation.Build();
   require(operation.IsDone() && !operation.HasErrors(), "operation_failed");
   return operation.Shape();
+}
+template <class Operation> TopoDS_Shape boolean(const TopoDS_Shape &a, const TopoDS_Shape &b) {
+  return boolean_many<Operation>(a, {b});
 }
 // Accept collections of the requested topology without silently dropping free
 // edges/faces from an otherwise valid compound.
@@ -1183,6 +1200,48 @@ Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) 
       builder.Add(result, copy(shape(env, item).value));
     return resource(env, result);
   }
+  if (op == "cut_removed") {
+    arity(2);
+    TopTools_ListOfShape arguments, tools, all;
+    arguments.Append(copy(shape(env, a[0]).value));
+    tools.Append(copy(shape(env, a[1]).value));
+    all.Append(arguments.First());
+    all.Append(tools.First());
+    // Cut and common use the same intersections. Share the expensive
+    // interference calculation rather than running two complete booleans.
+    BOPAlgo_PaveFiller filler;
+    filler.SetArguments(all);
+    filler.SetNonDestructive(true);
+    filler.SetRunParallel(false);
+    filler.Perform();
+    require(!filler.HasErrors(), "operation_failed");
+    BRepAlgoAPI_Cut cut(filler);
+    cut.SetArguments(arguments);
+    cut.SetTools(tools);
+    cut.SetNonDestructive(true);
+    cut.Build();
+    require(cut.IsDone() && !cut.HasErrors(), "operation_failed");
+    Term result = resource(env, cut.Shape());
+    BRepAlgoAPI_Common common(filler);
+    common.SetArguments(arguments);
+    common.SetTools(tools);
+    common.SetNonDestructive(true);
+    common.Build();
+    require(common.IsDone() && !common.HasErrors(), "operation_failed");
+    require(BRepCheck_Analyzer(common.Shape()).IsValid(), "invalid_shape");
+    return enif_make_tuple2(env, result, number(env, properties(common.Shape(), "volume").Mass()));
+  }
+  if (op == "cut_many" || op == "fuse_many") {
+    arity(2);
+    auto &body = shape(env, a[0]).value;
+    std::vector<TopoDS_Shape> tools;
+    for (auto item : terms(env, a[1]))
+      tools.push_back(shape(env, item).value);
+    require(!tools.empty());
+    if (op == "cut_many")
+      return resource(env, boolean_many<BRepAlgoAPI_Cut>(body, tools));
+    return resource(env, boolean_many<BRepAlgoAPI_Fuse>(body, tools));
+  }
   if (op == "cut" || op == "fuse" || op == "common") {
     arity(2);
     auto &left = shape(env, a[0]).value;
@@ -1193,9 +1252,53 @@ Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) 
       return resource(env, boolean<BRepAlgoAPI_Fuse>(left, right));
     return resource(env, boolean<BRepAlgoAPI_Common>(left, right));
   }
+  if (op == "transform_chain") {
+    arity(2);
+    const auto &body = shape(env, a[0]).value;
+    auto steps = terms(env, a[1]);
+    require(!steps.empty());
+    // Be conservative outside ordinary modeling coordinates. Cancellation at
+    // extreme magnitudes can hide an invalid intermediate shape; the evaluator
+    // must replay those operations with their original validation boundaries.
+    Bnd_Box bounds;
+    BRepBndLib::Add(body, bounds, false);
+    require(!bounds.IsVoid() && !bounds.IsOpen());
+    double x0, y0, z0, x1, y1, z1;
+    bounds.Get(x0, y0, z0, x1, y1, z1);
+    for (double value : {x0, y0, z0, x1, y1, z1})
+      require(std::isfinite(value) && std::abs(value) <= 1.0e6);
+    gp_Trsf combined;
+    for (Term step : steps) {
+      int count;
+      const Term *pair;
+      require(enif_get_tuple(env, step, &count, &pair) && count == 2);
+      auto args = terms(env, pair[1]);
+      gp_Trsf next;
+      if (enif_is_identical(pair[0], atom(env, "translate"))) {
+        require(args.size() == 1);
+        next.SetTranslation(vector(env, args[0]));
+      } else if (enif_is_identical(pair[0], atom(env, "rotate"))) {
+        require(args.size() == 3);
+        next.SetRotation(gp_Ax1(xyz(env, args[0]), gp_Dir(vector(env, args[1], true))),
+                         scalar(env, args[2]) * std::acos(-1) / 180);
+      } else if (enif_is_identical(pair[0], atom(env, "mirror"))) {
+        require(args.size() == 2);
+        next.SetMirror(gp_Ax2(xyz(env, args[0]), gp_Dir(vector(env, args[1], true))));
+      } else {
+        throw Error{"invalid_argument"};
+      }
+      // Each following operation acts in world space: next * combined.
+      combined.PreMultiply(next);
+      for (int row = 1; row <= 3; ++row)
+        for (int col = 1; col <= 4; ++col)
+          require(std::isfinite(combined.Value(row, col)) &&
+                  std::abs(combined.Value(row, col)) <= 1.0e6);
+    }
+    return resource(env, BRepBuilderAPI_Transform(body, combined, true).Shape());
+  }
   if (op == "translate" || op == "rotate" || op == "scale") {
     arity(op == "rotate" ? 4 : 2);
-    auto body = copy(shape(env, a[0]).value);
+    const auto &body = shape(env, a[0]).value;
     gp_Trsf transform;
     if (op == "translate")
       transform.SetTranslation(vector(env, a[1]));
@@ -1204,6 +1307,8 @@ Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) 
     else
       transform.SetRotation(gp_Ax1(xyz(env, a[1]), gp_Dir(vector(env, a[2], true))),
                             scalar(env, a[3]) * std::acos(-1) / 180);
+    // Copy=true already duplicates the topology and geometry. An explicit
+    // BRepBuilderAPI_Copy before it duplicated the whole shape a second time.
     return resource(env, BRepBuilderAPI_Transform(body, transform, true).Shape());
   }
   if (op == "fillet" || op == "chamfer") {
@@ -1267,17 +1372,28 @@ Term execute(ErlNifEnv *env, const std::string &op, const std::vector<Term> &a) 
   }
   if (op == "volume" || op == "area" || op == "length" || op == "center_of_mass") {
     arity(1);
-    auto props = properties(shape(env, a[0]).value, op);
+    auto &body = shape(env, a[0]);
+    if (op == "volume" && body.has_volume)
+      return number(env, body.volume);
+    auto props = properties(body.value, op);
     if (op == "center_of_mass") {
       require(std::abs(props.Mass()) > 0, "empty_shape");
       return point(env, props.CentreOfMass());
     }
-    return number(env, props.Mass());
+    auto result = number(env, props.Mass());
+    if (op == "volume") {
+      body.volume = props.Mass();
+      body.has_volume = true;
+    }
+    return result;
   }
-  if (op == "bounds") {
+  if (op == "bounds" || op == "bounds_envelope") {
     arity(1);
     Bnd_Box box;
-    BRepBndLib::AddOptimal(shape(env, a[0]).value, box, false, false);
+    if (op == "bounds_envelope")
+      BRepBndLib::Add(shape(env, a[0]).value, box, false);
+    else
+      BRepBndLib::AddOptimal(shape(env, a[0]).value, box, false, false);
     require(!box.IsVoid(), "empty_shape");
     double x0, y0, z0, x1, y1, z1;
     box.Get(x0, y0, z0, x1, y1, z1);
